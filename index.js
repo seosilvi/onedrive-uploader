@@ -2,14 +2,21 @@ const { ExifTool } = require("exiftool-vendored");
 const exiftool = new ExifTool();
 const fs = require("fs");
 const path = require("path");
-const fetch = require("node-fetch"); // Make sure to install this with npm install node-fetch
+const fetch = require("node-fetch"); // Ensure to install with npm install node-fetch
 const express = require('express');
+const cors = require('cors');
 const multer = require('multer'); // Middleware for handling file uploads
+
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Allow requests from https://sncleaningservices.co.uk
+app.use(cors({
+  origin: 'https://sncleaningservices.co.uk'
+}));
+
 // Configure multer for file uploads
-const upload = multer({ dest: 'uploads/' }); // Temp storage for uploaded files
+const upload = multer({ dest: 'uploads/' }); // Temporary storage for uploaded files
 
 // Basic route to check server status
 app.get('/', (req, res) => {
@@ -105,22 +112,3 @@ app.listen(port, () => {
 
 // Close the exiftool instance on exit
 process.on("exit", () => exiftool.end());
-const express = require('express');
-const cors = require('cors');
-
-const app = express();
-const port = process.env.PORT || 3000;
-
-// Allow requests from https://sncleaningservices.co.uk
-app.use(cors({
-  origin: 'https://sncleaningservices.co.uk'
-}));
-
-app.get('/', (req, res) => {
-    res.send('Hello, OneDrive uploader!');
-});
-
-app.listen(port, () => {
-    console.log(`Server is running on port ${port}`);
-});
-

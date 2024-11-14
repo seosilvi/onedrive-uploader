@@ -6,8 +6,9 @@
   "scripts": {
     "start": "node index.js"
   },
-  "dependencies": {
-    "express": "^4.17.1",
-    "exiftool-vendored": "^18.3.0"  
-  }
+ "dependencies": {
+  "express": "^4.17.1",
+  "exiftool-vendored": "^18.3.0",
+  "node-fetch": "^2.6.1"
+}
 }

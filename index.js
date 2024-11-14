@@ -2,7 +2,7 @@ const { ExifTool } = require("exiftool-vendored");
 const exiftool = new ExifTool();
 const fs = require("fs");
 const path = require("path");
-const fetch = require("node-fetch");
+const fetch = require("node-fetch"); // Ensure to install with npm install node-fetch
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer'); // Middleware for handling file uploads
@@ -30,6 +30,8 @@ app.get('/', (req, res) => {
 // Function to refresh the access token
 async function refreshAccessToken() {
   const tokenUrl = `https://login.microsoftonline.com/${process.env.TENANT_ID}/oauth2/v2.0/token`;
+  console.log("Attempting to refresh access token...");
+  
   const response = await fetch(tokenUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -43,6 +45,8 @@ async function refreshAccessToken() {
   });
   
   const data = await response.json();
+  console.log("Token Refresh Response:", data); // Log the full response for debugging
+  
   if (data.access_token) {
     accessToken = data.access_token; // Update the access token in memory
     refreshToken = data.refresh_token || refreshToken; // Update refresh token if provided

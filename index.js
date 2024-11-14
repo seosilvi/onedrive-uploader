@@ -16,7 +16,8 @@ app.use(cors({
   origin: 'https://sncleaningservices.co.uk'
 }));
 
-const upload = multer({ dest: 'uploads/' });
+// Configure multer to handle file and form fields
+const upload = multer({ dest: 'uploads/' }).single('file');
 
 app.get('/', (req, res) => {
     res.send('Hello, OneDrive uploader!');
@@ -49,46 +50,53 @@ async function refreshAccessToken() {
   }
 }
 
-app.post('/upload', upload.single('file'), async (req, res) => {
-    const { latitude, longitude, tag } = req.body;
-    const { postcode, frontly_id, form_name } = req.query;
-    const file = req.file;
-
-    if (!file || !postcode) {
-        return res.status(400).json({ error: 'File and postcode are required' });
-    }
-
-    const date = new Date().toISOString().split('T')[0];
-    const folderName = `${postcode}_${date}`;
-    const filePath = path.resolve(file.path);
-    const filename = `SN_Cleaning_${tag}_${Date.now()}_${file.originalname}`;
-
-    try {
-        const folderId = await createOneDriveFolder(folderName);
-        if (!folderId) {
-            return res.status(500).json({ error: 'Failed to create folder in OneDrive' });
+app.post('/upload', (req, res) => {
+    // Use multer to handle file upload and form fields
+    upload(req, res, async function (err) {
+        if (err) {
+            return res.status(500).json({ error: 'Error uploading file.' });
         }
 
-        console.log(`Adding geolocation to ${filename}`);
-        const modifiedFilePath = await addGeolocationToImage(filePath, latitude, longitude);
+        const { latitude, longitude, tag, postcode, frontly_id, form_name } = req.body;
+        const file = req.file;
 
-        if (modifiedFilePath) {
-            console.log(`Uploading ${filename} to folder ${folderName} in OneDrive`);
-            const uploadResult = await uploadToOneDrive(modifiedFilePath, folderId, filename);
-            if (uploadResult) {
-                res.status(200).json({ message: 'Uploaded successfully', url: uploadResult });
-            } else {
-                res.status(500).json({ error: 'Failed to upload to OneDrive' });
+        // Check for required fields
+        if (!file || !postcode) {
+            return res.status(400).json({ error: 'File and postcode are required' });
+        }
+
+        const date = new Date().toISOString().split('T')[0];
+        const folderName = `${postcode}_${date}`;
+        const filePath = path.resolve(file.path);
+        const filename = `SN_Cleaning_${tag}_${Date.now()}_${file.originalname}`;
+
+        try {
+            const folderId = await createOneDriveFolder(folderName);
+            if (!folderId) {
+                return res.status(500).json({ error: 'Failed to create folder in OneDrive' });
             }
-        } else {
-            res.status(500).json({ error: 'Failed to add geolocation metadata' });
+
+            console.log(`Adding geolocation to ${filename}`);
+            const modifiedFilePath = await addGeolocationToImage(filePath, latitude, longitude);
+
+            if (modifiedFilePath) {
+                console.log(`Uploading ${filename} to folder ${folderName} in OneDrive`);
+                const uploadResult = await uploadToOneDrive(modifiedFilePath, folderId, filename);
+                if (uploadResult) {
+                    res.status(200).json({ message: 'Uploaded successfully', url: uploadResult });
+                } else {
+                    res.status(500).json({ error: 'Failed to upload to OneDrive' });
+                }
+            } else {
+                res.status(500).json({ error: 'Failed to add geolocation metadata' });
+            }
+        } catch (error) {
+            console.error("Error processing upload:", error);
+            res.status(500).json({ error: 'Internal server error' });
+        } finally {
+            fs.unlinkSync(filePath);
         }
-    } catch (error) {
-        console.error("Error processing upload:", error);
-        res.status(500).json({ error: 'Internal server error' });
-    } finally {
-        fs.unlinkSync(filePath);
-    }
+    });
 });
 
 async function createOneDriveFolder(folderName) {

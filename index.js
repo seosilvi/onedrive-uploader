@@ -2,7 +2,7 @@ const { ExifTool } = require("exiftool-vendored");
 const exiftool = new ExifTool();
 const fs = require("fs");
 const path = require("path");
-const fetch = require("node-fetch"); // Ensure to install with npm install node-fetch
+const fetch = require("node-fetch");
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer'); // Middleware for handling file uploads
@@ -10,13 +10,17 @@ const multer = require('multer'); // Middleware for handling file uploads
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Set initial tokens from environment variables
+let accessToken = process.env.ACCESS_TOKEN;
+let refreshToken = process.env.REFRESH_TOKEN;
+
 // Allow requests from https://sncleaningservices.co.uk
 app.use(cors({
   origin: 'https://sncleaningservices.co.uk'
 }));
 
 // Configure multer for file uploads
-const upload = multer({ dest: 'uploads/' }); // Temporary storage for uploaded files
+const upload = multer({ dest: 'uploads/' });
 
 // Basic route to check server status
 app.get('/', (req, res) => {
@@ -32,7 +36,7 @@ async function refreshAccessToken() {
     body: new URLSearchParams({
       client_id: process.env.CLIENT_ID,
       client_secret: process.env.CLIENT_SECRET,
-      refresh_token: process.env.REFRESH_TOKEN,
+      refresh_token: refreshToken,
       grant_type: 'refresh_token',
       scope: 'https://graph.microsoft.com/.default'
     })
@@ -40,7 +44,8 @@ async function refreshAccessToken() {
   
   const data = await response.json();
   if (data.access_token) {
-    process.env.ACCESS_TOKEN = data.access_token; // Update the access token
+    accessToken = data.access_token; // Update the access token in memory
+    refreshToken = data.refresh_token || refreshToken; // Update refresh token if provided
     console.log("Access token refreshed successfully.");
     return true;
   } else {
@@ -110,7 +115,7 @@ async function uploadToOneDrive(filePath, filename) {
     let response = await fetch(oneDriveUploadUrl, {
       method: 'PUT',
       headers: {
-        'Authorization': `Bearer ${process.env.ACCESS_TOKEN}`,
+        'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'image/jpeg',
       },
       body: fileContent
@@ -125,7 +130,7 @@ async function uploadToOneDrive(filePath, filename) {
         response = await fetch(oneDriveUploadUrl, {
           method: 'PUT',
           headers: {
-            'Authorization': `Bearer ${process.env.ACCESS_TOKEN}`,
+            'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'image/jpeg',
           },
           body: fileContent

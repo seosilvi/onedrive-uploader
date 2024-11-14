@@ -9,7 +9,7 @@
   "dependencies": {
     "express": "^4.17.1",
     "exiftool-vendored": "^18.3.0",
-    "node-fetch": "^2.6.7", // Sticking to version 2 for compatibility with require syntax
-    "multer": "^1.4.5-lts.1" // Add multer for file uploads
+    "node-fetch": "^2.6.7", 
+    "multer": "^1.4.5-lts.1" 
   }
 }

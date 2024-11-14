@@ -37,18 +37,22 @@
         const frontly_id = urlParams.get('frontly_id');
         const form_name = urlParams.get('form_name');
         
+        console.log("URL Parameters:", { postcode, frontly_id, form_name });
+
         let selectedTag = '';
 
         document.getElementById('beforeOption').addEventListener('click', () => {
             selectedTag = 'before';
             document.getElementById('beforeOption').classList.add('selected');
             document.getElementById('afterOption').classList.remove('selected');
+            console.log("Selected Tag:", selectedTag);
         });
 
         document.getElementById('afterOption').addEventListener('click', () => {
             selectedTag = 'after';
             document.getElementById('afterOption').classList.add('selected');
             document.getElementById('beforeOption').classList.remove('selected');
+            console.log("Selected Tag:", selectedTag);
         });
 
         fileInput.addEventListener('change', () => {
@@ -66,7 +70,10 @@
 
         uploadBtn.addEventListener('click', async () => {
             const files = fileInput.files;
-            if (files.length === 0 || !selectedTag || !postcode) return alert("Select files, type, and postcode");
+            if (files.length === 0 || !selectedTag || !postcode) {
+                alert("Select files, type, and postcode");
+                return;
+            }
 
             spinnerOverlay.style.visibility = 'visible';
 
@@ -77,6 +84,8 @@
                 formData.append("latitude", 51.5074);  // Example latitude
                 formData.append("longitude", -0.1278); // Example longitude
 
+                console.log("Uploading file:", files[i].name);
+
                 try {
                     const response = await fetch(`https://onedrive-uploader.onrender.com/upload?postcode=${postcode}&frontly_id=${frontly_id}&form_name=${form_name}`, {
                         method: 'POST',
@@ -86,7 +95,7 @@
                     if (response.ok) {
                         console.log(`File ${i + 1} uploaded successfully.`);
                     } else {
-                        console.error(`Failed to upload file ${i + 1}.`);
+                        console.error(`Failed to upload file ${i + 1}.`, await response.text());
                     }
                 } catch (error) {
                     console.error(`Error uploading file ${i + 1}:`, error);

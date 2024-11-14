@@ -8,6 +8,6 @@
   },
   "dependencies": {
     "express": "^4.17.1",
-    "exiftool-vendored": "^18.3.0"  // You can also use the latest version number here
+    "exiftool-vendored": "^18.3.0"  
   }
 }

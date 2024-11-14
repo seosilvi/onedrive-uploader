@@ -3,50 +3,51 @@ const exiftool = new ExifTool();
 const fs = require("fs");
 const path = require("path");
 const fetch = require("node-fetch");
-const express = require('express');
-const cors = require('cors');
-const multer = require('multer');
-
+const express = require("express");
+const cors = require("cors");
+const multer = require("multer");
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Tokens
 let accessToken = process.env.ACCESS_TOKEN;
 let refreshToken = process.env.REFRESH_TOKEN;
 
-app.use(cors({
-  origin: 'https://sncleaningservices.co.uk'
-}));
+app.use(
+  cors({
+    origin: "https://sncleaningservices.co.uk",
+  })
+);
 
-// File Upload Configuration
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ dest: "uploads/" });
 
-// Server Status Route
-app.get('/', (req, res) => {
-    res.send('Hello, OneDrive uploader!');
+app.get("/", (req, res) => {
+  res.send("Hello, OneDrive uploader!");
 });
 
-// Refresh Access Token
 async function refreshAccessToken() {
   const tokenUrl = `https://login.microsoftonline.com/${process.env.TENANT_ID}/oauth2/v2.0/token`;
-  
+
+  console.log("Attempting to refresh access token...");
+
   const response = await fetch(tokenUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       client_id: process.env.CLIENT_ID,
       client_secret: process.env.CLIENT_SECRET,
       refresh_token: refreshToken,
-      grant_type: 'refresh_token',
-      scope: 'https://graph.microsoft.com/.default'
-    })
+      grant_type: "refresh_token",
+      scope: "https://graph.microsoft.com/.default",
+    }),
   });
 
   const data = await response.json();
-  
+  console.log("Token Refresh Response:", data);
+
   if (data.access_token) {
     accessToken = data.access_token;
     refreshToken = data.refresh_token || refreshToken;
+    console.log("Access token refreshed successfully.");
     return true;
   } else {
     console.error("Failed to refresh access token:", data);
@@ -54,85 +55,85 @@ async function refreshAccessToken() {
   }
 }
 
-// Upload Route
-app.post('/upload', upload.single('file'), async (req, res) => {
-    const { latitude, longitude, tag } = req.body;
-    const { postcode, frontly_id, form_name } = req.query;
-    const file = req.file;
+app.post("/upload", upload.single("file"), async (req, res) => {
+  console.log("Received upload request");
 
-    if (!file || !postcode) {
-        return res.status(400).json({ error: 'File and postcode are required' });
+  const { latitude, longitude, tag } = req.body;
+  const { postcode, frontly_id, form_name } = req.query;
+  const file = req.file;
+
+  // Detailed log of received data
+  console.log("Request data:", {
+    latitude,
+    longitude,
+    tag,
+    postcode,
+    frontly_id,
+    form_name,
+    file: file ? file.originalname : null,
+  });
+
+  if (!file || !postcode) {
+    console.error("File or postcode is missing");
+    return res.status(400).json({ error: "File and postcode are required" });
+  }
+
+  const date = new Date().toISOString().split("T")[0];
+  const folderName = `${postcode}_${date}`;
+  const filePath = path.resolve(file.path);
+  const filename = `SN_Cleaning_${tag}_${Date.now()}_${file.originalname}`;
+
+  try {
+    // Create folder in OneDrive
+    console.log(`Creating OneDrive folder: ${folderName}`);
+    const folderId = await createOneDriveFolder(folderName);
+    if (!folderId) {
+      console.error("Failed to create folder in OneDrive");
+      return res.status(500).json({ error: "Failed to create folder in OneDrive" });
     }
 
-    const date = new Date().toISOString().split('T')[0];
-    const folderName = `${postcode}_${date}`;
-    const filePath = path.resolve(file.path);
-    const filename = `SN_Cleaning_${tag}_${Date.now()}_${file.originalname}`;
+    // Add geolocation data to image
+    console.log(`Adding geolocation to ${filename}`);
+    const modifiedFilePath = await addGeolocationToImage(filePath, latitude, longitude);
 
-    try {
-        // Step 1: Create Folder in OneDrive
-        const folderId = await createOneDriveFolder(folderName);
-        if (!folderId) {
-            return res.status(500).json({ error: 'Failed to create folder in OneDrive' });
-        }
-
-        // Step 2: Add Geolocation to Image
-        console.log(`Adding geolocation to ${filename}`);
-        const modifiedFilePath = await addGeolocationToImage(filePath, latitude, longitude);
-
-        if (modifiedFilePath) {
-            // Step 3: Upload File to OneDrive
-            console.log(`Uploading ${filename} to folder ${folderName} in OneDrive`);
-            const uploadResult = await uploadToOneDrive(modifiedFilePath, folderId, filename);
-            if (uploadResult) {
-                res.status(200).json({ message: 'Uploaded successfully', url: uploadResult });
-            } else {
-                res.status(500).json({ error: 'Failed to upload to OneDrive' });
-            }
-        } else {
-            res.status(500).json({ error: 'Failed to add geolocation metadata' });
-        }
-    } catch (error) {
-        console.error("Error processing upload:", error);
-        res.status(500).json({ error: 'Internal server error' });
-    } finally {
-        fs.unlinkSync(filePath); // Clean up the temporary file
+    if (modifiedFilePath) {
+      // Upload file to OneDrive
+      console.log(`Uploading ${filename} to folder ${folderName} in OneDrive`);
+      const uploadResult = await uploadToOneDrive(modifiedFilePath, folderId, filename);
+      if (uploadResult) {
+        console.log("Upload successful");
+        res.status(200).json({ message: "Uploaded successfully", url: uploadResult });
+      } else {
+        console.error("Upload to OneDrive failed");
+        res.status(500).json({ error: "Failed to upload to OneDrive" });
+      }
+    } else {
+      console.error("Failed to add geolocation metadata");
+      res.status(500).json({ error: "Failed to add geolocation metadata" });
     }
+  } catch (error) {
+    console.error("Error processing upload:", error);
+    res.status(500).json({ error: "Internal server error" });
+  } finally {
+    fs.unlinkSync(filePath);
+  }
 });
 
-// Add Geolocation Metadata
-async function addGeolocationToImage(filePath, latitude, longitude) {
-  try {
-    await exiftool.write(filePath, {
-      GPSLatitude: latitude,
-      GPSLatitudeRef: latitude >= 0 ? "N" : "S",
-      GPSLongitude: longitude,
-      GPSLongitudeRef: longitude >= 0 ? "E" : "W",
-    });
-    console.log("Geolocation data added successfully!");
-    return filePath;
-  } catch (error) {
-    console.error("Error adding geolocation data:", error);
-    return null;
-  }
-}
-
-// Create Folder in OneDrive
 async function createOneDriveFolder(folderName) {
   const createFolderUrl = `https://graph.microsoft.com/v1.0/drive/root:/UploadedFiles/${folderName}:/children`;
 
   try {
     const response = await fetch(createFolderUrl, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         name: folderName,
         folder: {},
-        '@microsoft.graph.conflictBehavior': 'rename'
-      })
+        "@microsoft.graph.conflictBehavior": "rename",
+      }),
     });
 
     if (response.ok) {
@@ -150,34 +151,34 @@ async function createOneDriveFolder(folderName) {
   }
 }
 
-// Upload File to OneDrive
 async function uploadToOneDrive(filePath, folderId, filename) {
   const fileContent = fs.createReadStream(filePath);
   const oneDriveUploadUrl = `https://graph.microsoft.com/v1.0/drive/items/${folderId}:/${filename}:/content`;
 
   try {
     let response = await fetch(oneDriveUploadUrl, {
-      method: 'PUT',
+      method: "PUT",
       headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'image/jpeg',
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "image/jpeg",
       },
-      body: fileContent
+      body: fileContent,
     });
 
-    // Refresh Token if Unauthorized
     if (response.status === 401) {
+      console.log("Access token expired. Refreshing token...");
       const refreshed = await refreshAccessToken();
       if (refreshed) {
         response = await fetch(oneDriveUploadUrl, {
-          method: 'PUT',
+          method: "PUT",
           headers: {
-            'Authorization': `Bearer ${accessToken}`, // New token used here
-            'Content-Type': 'image/jpeg',
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "image/jpeg",
           },
-          body: fileContent
+          body: fileContent,
         });
       } else {
+        console.error("Failed to refresh access token.");
         return null;
       }
     }
@@ -197,10 +198,24 @@ async function uploadToOneDrive(filePath, folderId, filename) {
   }
 }
 
-// Start Server
+async function addGeolocationToImage(filePath, latitude, longitude) {
+  try {
+    await exiftool.write(filePath, {
+      GPSLatitude: latitude,
+      GPSLatitudeRef: latitude >= 0 ? "N" : "S",
+      GPSLongitude: longitude,
+      GPSLongitudeRef: longitude >= 0 ? "E" : "W",
+    });
+    console.log("Geolocation data added successfully!");
+    return filePath;
+  } catch (error) {
+    console.error("Error adding geolocation data:", error);
+    return null;
+  }
+}
+
 app.listen(port, () => {
-    console.log(`Server is running on port ${port}`);
+  console.log(`Server is running on port ${port}`);
 });
 
-// Close the ExifTool instance on exit
 process.on("exit", () => exiftool.end());

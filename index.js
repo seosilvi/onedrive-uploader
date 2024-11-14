@@ -6,27 +6,27 @@ const fetch = require("node-fetch");
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
+
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Set initial tokens from environment variables
+// Tokens
 let accessToken = process.env.ACCESS_TOKEN;
 let refreshToken = process.env.REFRESH_TOKEN;
 
-// Allow requests from https://sncleaningservices.co.uk
 app.use(cors({
   origin: 'https://sncleaningservices.co.uk'
 }));
 
-// Configure multer for file uploads
+// File Upload Configuration
 const upload = multer({ dest: 'uploads/' });
 
-// Basic route to check server status
+// Server Status Route
 app.get('/', (req, res) => {
     res.send('Hello, OneDrive uploader!');
 });
 
-// Function to refresh the access token
+// Refresh Access Token
 async function refreshAccessToken() {
   const tokenUrl = `https://login.microsoftonline.com/${process.env.TENANT_ID}/oauth2/v2.0/token`;
   
@@ -43,11 +43,10 @@ async function refreshAccessToken() {
   });
 
   const data = await response.json();
-
+  
   if (data.access_token) {
     accessToken = data.access_token;
     refreshToken = data.refresh_token || refreshToken;
-    console.log("Access token refreshed successfully.");
     return true;
   } else {
     console.error("Failed to refresh access token:", data);
@@ -55,10 +54,10 @@ async function refreshAccessToken() {
   }
 }
 
-// Upload route
+// Upload Route
 app.post('/upload', upload.single('file'), async (req, res) => {
     const { latitude, longitude, tag } = req.body;
-    const { postcode } = req.query;
+    const { postcode, frontly_id, form_name } = req.query;
     const file = req.file;
 
     if (!file || !postcode) {
@@ -71,15 +70,18 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     const filename = `SN_Cleaning_${tag}_${Date.now()}_${file.originalname}`;
 
     try {
+        // Step 1: Create Folder in OneDrive
         const folderId = await createOneDriveFolder(folderName);
         if (!folderId) {
             return res.status(500).json({ error: 'Failed to create folder in OneDrive' });
         }
 
+        // Step 2: Add Geolocation to Image
         console.log(`Adding geolocation to ${filename}`);
         const modifiedFilePath = await addGeolocationToImage(filePath, latitude, longitude);
 
         if (modifiedFilePath) {
+            // Step 3: Upload File to OneDrive
             console.log(`Uploading ${filename} to folder ${folderName} in OneDrive`);
             const uploadResult = await uploadToOneDrive(modifiedFilePath, folderId, filename);
             if (uploadResult) {
@@ -98,7 +100,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     }
 });
 
-// Add geolocation metadata to image
+// Add Geolocation Metadata
 async function addGeolocationToImage(filePath, latitude, longitude) {
   try {
     await exiftool.write(filePath, {
@@ -115,12 +117,12 @@ async function addGeolocationToImage(filePath, latitude, longitude) {
   }
 }
 
-// Create a folder in OneDrive
+// Create Folder in OneDrive
 async function createOneDriveFolder(folderName) {
   const createFolderUrl = `https://graph.microsoft.com/v1.0/drive/root:/UploadedFiles/${folderName}:/children`;
 
   try {
-    let response = await fetch(createFolderUrl, {
+    const response = await fetch(createFolderUrl, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
@@ -132,30 +134,6 @@ async function createOneDriveFolder(folderName) {
         '@microsoft.graph.conflictBehavior': 'rename'
       })
     });
-
-    if (response.status === 401 || (await response.json()).error?.code === 'InvalidAuthenticationToken') {
-      console.log("Access token expired. Refreshing token...");
-      const refreshed = await refreshAccessToken();
-
-      if (refreshed) {
-        // Retry folder creation with the new access token
-        response = await fetch(createFolderUrl, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            name: folderName,
-            folder: {},
-            '@microsoft.graph.conflictBehavior': 'rename'
-          })
-        });
-      } else {
-        console.error("Failed to refresh access token.");
-        return null;
-      }
-    }
 
     if (response.ok) {
       const data = await response.json();
@@ -172,7 +150,7 @@ async function createOneDriveFolder(folderName) {
   }
 }
 
-// Upload file to OneDrive
+// Upload File to OneDrive
 async function uploadToOneDrive(filePath, folderId, filename) {
   const fileContent = fs.createReadStream(filePath);
   const oneDriveUploadUrl = `https://graph.microsoft.com/v1.0/drive/items/${folderId}:/${filename}:/content`;
@@ -187,21 +165,19 @@ async function uploadToOneDrive(filePath, folderId, filename) {
       body: fileContent
     });
 
-    if (response.status === 401 || (await response.json()).error?.code === 'InvalidAuthenticationToken') {
-      console.log("Access token expired. Refreshing token...");
+    // Refresh Token if Unauthorized
+    if (response.status === 401) {
       const refreshed = await refreshAccessToken();
-      
       if (refreshed) {
         response = await fetch(oneDriveUploadUrl, {
           method: 'PUT',
           headers: {
-            'Authorization': `Bearer ${accessToken}`,
+            'Authorization': `Bearer ${accessToken}`, // New token used here
             'Content-Type': 'image/jpeg',
           },
           body: fileContent
         });
       } else {
-        console.error("Failed to refresh access token.");
         return null;
       }
     }
@@ -221,10 +197,10 @@ async function uploadToOneDrive(filePath, folderId, filename) {
   }
 }
 
-// Start the server
+// Start Server
 app.listen(port, () => {
     console.log(`Server is running on port ${port}`);
 });
 
-// Close the exiftool instance on exit
+// Close the ExifTool instance on exit
 process.on("exit", () => exiftool.end());

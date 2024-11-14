@@ -78,7 +78,7 @@ async function addGeolocationToImage(filePath, latitude, longitude) {
 // Upload file to OneDrive
 async function uploadToOneDrive(filePath, filename) {
   const fileContent = fs.createReadStream(filePath);
-  const oneDriveUploadUrl = `https://graph.microsoft.com/v1.0/me/drive/root:/UploadedFiles/${filename}:/content`;
+  const oneDriveUploadUrl = `https://graph.microsoft.com/v1.0/drive/root:/UploadedFiles/${filename}:/content`;
 
   try {
     const response = await fetch(oneDriveUploadUrl, {

@@ -105,3 +105,22 @@ app.listen(port, () => {
 
 // Close the exiftool instance on exit
 process.on("exit", () => exiftool.end());
+const express = require('express');
+const cors = require('cors');
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+// Allow requests from https://sncleaningservices.co.uk
+app.use(cors({
+  origin: 'https://sncleaningservices.co.uk'
+}));
+
+app.get('/', (req, res) => {
+    res.send('Hello, OneDrive uploader!');
+});
+
+app.listen(port, () => {
+    console.log(`Server is running on port ${port}`);
+});
+

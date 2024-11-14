@@ -23,6 +23,32 @@ app.get('/', (req, res) => {
     res.send('Hello, OneDrive uploader!');
 });
 
+// Function to refresh the access token
+async function refreshAccessToken() {
+  const tokenUrl = `https://login.microsoftonline.com/${process.env.TENANT_ID}/oauth2/v2.0/token`;
+  const response = await fetch(tokenUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: process.env.CLIENT_ID,
+      client_secret: process.env.CLIENT_SECRET,
+      refresh_token: process.env.REFRESH_TOKEN,
+      grant_type: 'refresh_token',
+      scope: 'https://graph.microsoft.com/.default'
+    })
+  });
+  
+  const data = await response.json();
+  if (data.access_token) {
+    process.env.ACCESS_TOKEN = data.access_token; // Update the access token
+    console.log("Access token refreshed successfully.");
+    return true;
+  } else {
+    console.error("Failed to refresh access token:", data);
+    return false;
+  }
+}
+
 // Upload route
 app.post('/upload', upload.single('file'), async (req, res) => {
     const { latitude, longitude, tag } = req.body;
@@ -81,7 +107,7 @@ async function uploadToOneDrive(filePath, filename) {
   const oneDriveUploadUrl = `https://graph.microsoft.com/v1.0/drive/root:/UploadedFiles/${filename}:/content`;
 
   try {
-    const response = await fetch(oneDriveUploadUrl, {
+    let response = await fetch(oneDriveUploadUrl, {
       method: 'PUT',
       headers: {
         'Authorization': `Bearer ${process.env.ACCESS_TOKEN}`,
@@ -89,6 +115,26 @@ async function uploadToOneDrive(filePath, filename) {
       },
       body: fileContent
     });
+
+    // Check if token is expired and refresh if necessary
+    if (response.status === 401) {
+      console.log("Access token expired. Refreshing token...");
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        // Retry the upload with the new access token
+        response = await fetch(oneDriveUploadUrl, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${process.env.ACCESS_TOKEN}`,
+            'Content-Type': 'image/jpeg',
+          },
+          body: fileContent
+        });
+      } else {
+        console.error("Failed to refresh access token.");
+        return null;
+      }
+    }
 
     if (response.ok) {
       const data = await response.json();

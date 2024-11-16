@@ -59,6 +59,7 @@ async function refreshAccessToken() {
   if (data.access_token) {
     accessToken = data.access_token;
     refreshToken = data.refresh_token || refreshToken;
+    console.log("Access token refreshed successfully");
     return true;
   } else {
     console.error("Failed to refresh access token:", data);
@@ -81,6 +82,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 
   // Return an error if file or postcode is missing
   if (!file || !postcode) {
+    console.error("Missing file or postcode in the request");
     return res.status(400).json({ error: "File and postcode are required" });
   }
 
@@ -90,42 +92,39 @@ app.post("/upload", upload.single("file"), async (req, res) => {
   const filename = `SN_Cleaning_${tag}_${Date.now()}_${file.originalname}`;
 
   try {
+    console.log(`Determining parent folder ID for form_name: ${form_name}`);
     const parentFolderId = getServiceFolderId(form_name);
+
     if (!parentFolderId) {
-      return res
-        .status(500)
-        .json({ error: `Service folder "${form_name}" not found in OneDrive.` });
+      console.error(`Service folder not found for form_name: "${form_name}"`);
+      return res.status(500).json({ error: `Service folder "${form_name}" not found in OneDrive.` });
     }
 
+    console.log(`Parent folder ID found: ${parentFolderId}`);
+    console.log(`Checking or creating target folder: ${folderName}`);
     const targetFolderId = await createOrGetFolder(parentFolderId, folderName);
+
     if (!targetFolderId) {
-      return res
-        .status(500)
-        .json({ error: "Failed to create or get target folder in OneDrive." });
+      console.error(`Failed to create or get target folder: ${folderName}`);
+      return res.status(500).json({ error: "Failed to create or get target folder in OneDrive." });
     }
 
-    console.log(`Adding geolocation to ${filename}`);
-    const modifiedFilePath = await addGeolocationToImage(
-      filePath,
-      latitude,
-      longitude
-    );
+    console.log(`Target folder ID found: ${targetFolderId}`);
+    console.log(`Adding geolocation metadata to file: ${filename}`);
+    const modifiedFilePath = await addGeolocationToImage(filePath, latitude, longitude);
 
     if (modifiedFilePath) {
-      console.log(
-        `Uploading ${filename} to folder ${folderName} in OneDrive`
-      );
-      const uploadResult = await uploadToOneDrive(
-        modifiedFilePath,
-        targetFolderId,
-        filename
-      );
+      console.log(`Uploading file to OneDrive: ${filename}`);
+      const uploadResult = await uploadToOneDrive(modifiedFilePath, targetFolderId, filename);
       if (uploadResult) {
+        console.log(`File uploaded successfully: ${uploadResult}`);
         res.status(200).json({ message: "Uploaded successfully", url: uploadResult });
       } else {
+        console.error("File upload failed");
         res.status(500).json({ error: "Failed to upload to OneDrive" });
       }
     } else {
+      console.error("Failed to add geolocation metadata to the file");
       res.status(500).json({ error: "Failed to add geolocation metadata" });
     }
   } catch (error) {
@@ -138,10 +137,17 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 
 // Helper function to get the service folder ID
 function getServiceFolderId(formName) {
+  console.log("Looking for service folder ID for form_name:", formName);
   const matchingService = Object.keys(serviceFolderMap).find((key) =>
-    formName.includes(key)
+    formName.includes(key.trim())
   );
-  return matchingService ? serviceFolderMap[matchingService] : null;
+  if (matchingService) {
+    console.log(`Matched service folder: ${matchingService}`);
+    return serviceFolderMap[matchingService];
+  } else {
+    console.error(`No matching service folder found for form_name: ${formName}`);
+    return null;
+  }
 }
 
 // Helper function to create or get a folder
@@ -149,23 +155,26 @@ async function createOrGetFolder(parentId, folderName) {
   const url = `https://graph.microsoft.com/v1.0/drive/items/${parentId}/children`;
 
   try {
+    console.log(`Checking if folder exists: ${folderName}`);
     const response = await fetch(url, {
       method: "GET",
       headers: { Authorization: `Bearer ${accessToken}` },
     });
 
     const data = await response.json();
-
     console.log("Folder search response:", data);
 
     if (Array.isArray(data.value)) {
       const folder = data.value.find(
         (item) => item.name === folderName && item.folder
       );
-      if (folder) return folder.id;
+      if (folder) {
+        console.log(`Folder already exists: ${folderName}`);
+        return folder.id;
+      }
     }
 
-    // Folder not found, create it
+    console.log(`Folder not found, creating folder: ${folderName}`);
     return await createFolder(parentId, folderName);
   } catch (error) {
     console.error("Error in createOrGetFolder:", error);
@@ -205,6 +214,23 @@ async function createFolder(parentId, folderName) {
   }
 }
 
+// Function to add geolocation metadata to the image
+async function addGeolocationToImage(filePath, latitude, longitude) {
+  try {
+    await exiftool.write(filePath, {
+      GPSLatitude: latitude,
+      GPSLatitudeRef: latitude >= 0 ? "N" : "S",
+      GPSLongitude: longitude,
+      GPSLongitudeRef: longitude >= 0 ? "E" : "W",
+    });
+    console.log("Geolocation data added successfully!");
+    return filePath;
+  } catch (error) {
+    console.error("Error adding geolocation data:", error);
+    return null;
+  }
+}
+
 // Helper function to upload file to OneDrive
 async function uploadToOneDrive(filePath, folderId, filename) {
   const fileContent = fs.createReadStream(filePath);
@@ -221,6 +247,7 @@ async function uploadToOneDrive(filePath, folderId, filename) {
     });
 
     if (response.status === 401) {
+      console.warn("Access token expired, refreshing...");
       const refreshed = await refreshAccessToken();
       if (refreshed) {
         response = await fetch(url, {
@@ -232,6 +259,7 @@ async function uploadToOneDrive(filePath, folderId, filename) {
           body: fileContent,
         });
       } else {
+        console.error("Failed to refresh access token");
         return null;
       }
     }
@@ -248,23 +276,6 @@ async function uploadToOneDrive(filePath, folderId, filename) {
   } catch (error) {
     console.error("Error during upload:", error);
     throw error;
-  }
-}
-
-// Function to add geolocation metadata to the image
-async function addGeolocationToImage(filePath, latitude, longitude) {
-  try {
-    await exiftool.write(filePath, {
-      GPSLatitude: latitude,
-      GPSLatitudeRef: latitude >= 0 ? "N" : "S",
-      GPSLongitude: longitude,
-      GPSLongitudeRef: longitude >= 0 ? "E" : "W",
-    });
-    console.log("Geolocation data added successfully!");
-    return filePath;
-  } catch (error) {
-    console.error("Error adding geolocation data:", error);
-    return null;
   }
 }
 

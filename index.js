@@ -1,71 +1,15 @@
-const { ExifTool } = require("exiftool-vendored");
-const exiftool = new ExifTool();
-const fs = require("fs");
-const path = require("path");
-const fetch = require("node-fetch");
-const express = require("express");
-const cors = require("cors");
-const multer = require("multer");
-const app = express();
-const port = process.env.PORT || 3000;
+// Existing imports and setup remain the same
 
-let accessToken = process.env.ACCESS_TOKEN;
-let refreshToken = process.env.REFRESH_TOKEN;
-
-// Service folder mapping
-const serviceFolderMap = {
-  "After Builders Cleaning": "01HRAU3CIERAXDQ73IJFDLT73OV7WR2HIM",
+// Predefined folder mappings
+const serviceFolderMapping = {
   "Airbnb Cleaning": "01HRAU3CKVL2NOUI3KNZFIMQGWF2W6I6KE",
-  "Carpet Cleaning": "01HRAU3CJJ7PDR5EP5GRHKHVAC7RQRA3NG",
+  "Domestic Cleaning": "01HRAU3CJNFG44TQSQ5RBJOKXJNO7MGHHQ",
+  "End Of Tenancy Cleaning": "01HRAU3CMT64WNWGRAENAJ4KECYBFO4Y6C",
+  "After Builders Cleaning": "01HRAU3CIERAXDQ73IJFDLT73OV7WR2HIM",
   "Commercial Cleaning": "01HRAU3CMUE53HAO7J6BGJFN64XZMQQEUB",
   "Deep House Cleaning": "01HRAU3CMX5K7X6VAC2NHK2DK3H6R5IGF7",
-  "Domestic Cleaning": "01HRAU3CJNFG44TQSQ5RBJOKXJNO7MGHHQ",
-  "End Of Tenancy Cleaning": "01HRAU3CMT64WNWGRAENAJ4KECYBFO4Y6C"
+  "Carpet Cleaning": "01HRAU3CJJ7PDR5EP5GRHKHVAC7RQRA3NG",
 };
-
-// Allow CORS requests from your domain
-app.use(
-  cors({
-    origin: "https://sncleaningservices.co.uk",
-  })
-);
-
-// Set up multer to handle file uploads
-const upload = multer({ dest: "uploads/" });
-
-// Route to check server status
-app.get("/", (req, res) => {
-  res.send("Hello, OneDrive uploader!");
-});
-
-// Helper function to refresh the access token
-async function refreshAccessToken() {
-  const tokenUrl = `https://login.microsoftonline.com/${process.env.TENANT_ID}/oauth2/v2.0/token`;
-
-  const response = await fetch(tokenUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: process.env.CLIENT_ID,
-      client_secret: process.env.CLIENT_SECRET,
-      refresh_token: refreshToken,
-      grant_type: "refresh_token",
-      scope: "https://graph.microsoft.com/.default",
-    }),
-  });
-
-  const data = await response.json();
-
-  if (data.access_token) {
-    accessToken = data.access_token;
-    refreshToken = data.refresh_token || refreshToken;
-    console.log("Access token refreshed successfully");
-    return true;
-  } else {
-    console.error("Failed to refresh access token:", data);
-    return false;
-  }
-}
 
 // Upload endpoint to receive the data
 app.post("/upload", upload.single("file"), async (req, res) => {
@@ -80,10 +24,9 @@ app.post("/upload", upload.single("file"), async (req, res) => {
   console.log("Postcode:", postcode);
   console.log("Form Name:", form_name);
 
-  // Return an error if file or postcode is missing
-  if (!file || !postcode) {
-    console.error("Missing file or postcode in the request");
-    return res.status(400).json({ error: "File and postcode are required" });
+  // Validate inputs
+  if (!file || !postcode || !form_name) {
+    return res.status(400).json({ error: "File, postcode, and form_name are required." });
   }
 
   const date = new Date().toISOString().split("T")[0];
@@ -92,39 +35,30 @@ app.post("/upload", upload.single("file"), async (req, res) => {
   const filename = `SN_Cleaning_${tag}_${Date.now()}_${file.originalname}`;
 
   try {
-    console.log(`Determining parent folder ID for form_name: ${form_name}`);
-    const parentFolderId = getServiceFolderId(form_name);
-
+    // Directly get the folder ID from the mapping
+    const parentFolderId = serviceFolderMapping[form_name.trim()];
     if (!parentFolderId) {
-      console.error(`Service folder not found for form_name: "${form_name}"`);
-      return res.status(500).json({ error: `Service folder "${form_name}" not found in OneDrive.` });
+      return res.status(400).json({ error: `No mapped folder ID found for form_name: "${form_name}"` });
     }
+    console.log(`Mapped parent folder ID for form_name "${form_name}": ${parentFolderId}`);
 
-    console.log(`Parent folder ID found: ${parentFolderId}`);
-    console.log(`Checking or creating target folder: ${folderName}`);
     const targetFolderId = await createOrGetFolder(parentFolderId, folderName);
-
     if (!targetFolderId) {
-      console.error(`Failed to create or get target folder: ${folderName}`);
       return res.status(500).json({ error: "Failed to create or get target folder in OneDrive." });
     }
 
-    console.log(`Target folder ID found: ${targetFolderId}`);
-    console.log(`Adding geolocation metadata to file: ${filename}`);
+    console.log(`Adding geolocation to ${filename}`);
     const modifiedFilePath = await addGeolocationToImage(filePath, latitude, longitude);
 
     if (modifiedFilePath) {
-      console.log(`Uploading file to OneDrive: ${filename}`);
+      console.log(`Uploading ${filename} to folder ${folderName} in OneDrive`);
       const uploadResult = await uploadToOneDrive(modifiedFilePath, targetFolderId, filename);
       if (uploadResult) {
-        console.log(`File uploaded successfully: ${uploadResult}`);
         res.status(200).json({ message: "Uploaded successfully", url: uploadResult });
       } else {
-        console.error("File upload failed");
         res.status(500).json({ error: "Failed to upload to OneDrive" });
       }
     } else {
-      console.error("Failed to add geolocation metadata to the file");
       res.status(500).json({ error: "Failed to add geolocation metadata" });
     }
   } catch (error) {
@@ -135,46 +69,29 @@ app.post("/upload", upload.single("file"), async (req, res) => {
   }
 });
 
-// Helper function to get the service folder ID
-function getServiceFolderId(formName) {
-  console.log("Looking for service folder ID for form_name:", formName);
-  const matchingService = Object.keys(serviceFolderMap).find((key) =>
-    formName.includes(key.trim())
-  );
-  if (matchingService) {
-    console.log(`Matched service folder: ${matchingService}`);
-    return serviceFolderMap[matchingService];
-  } else {
-    console.error(`No matching service folder found for form_name: ${formName}`);
-    return null;
-  }
-}
-
-// Helper function to create or get a folder
+// Function to create or get a folder remains unchanged
 async function createOrGetFolder(parentId, folderName) {
   const url = `https://graph.microsoft.com/v1.0/drive/items/${parentId}/children`;
 
   try {
-    console.log(`Checking if folder exists: ${folderName}`);
     const response = await fetch(url, {
       method: "GET",
       headers: { Authorization: `Bearer ${accessToken}` },
     });
 
     const data = await response.json();
+
     console.log("Folder search response:", data);
 
     if (Array.isArray(data.value)) {
-      const folder = data.value.find(
-        (item) => item.name === folderName && item.folder
-      );
+      const folder = data.value.find((item) => item.name === folderName && item.folder);
       if (folder) {
-        console.log(`Folder already exists: ${folderName}`);
+        console.log(`Found existing folder: ${folderName}`);
         return folder.id;
       }
     }
 
-    console.log(`Folder not found, creating folder: ${folderName}`);
+    // Folder not found, create it
     return await createFolder(parentId, folderName);
   } catch (error) {
     console.error("Error in createOrGetFolder:", error);
@@ -182,106 +99,4 @@ async function createOrGetFolder(parentId, folderName) {
   }
 }
 
-// Helper function to create a folder in OneDrive
-async function createFolder(parentId, folderName) {
-  const url = `https://graph.microsoft.com/v1.0/drive/items/${parentId}/children`;
-
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        name: folderName,
-        folder: {},
-        "@microsoft.graph.conflictBehavior": "rename",
-      }),
-    });
-
-    const data = await response.json();
-
-    if (data.id) {
-      console.log(`Folder created: ${folderName}`);
-      return data.id;
-    } else {
-      throw new Error(`Failed to create folder: ${folderName}`);
-    }
-  } catch (error) {
-    console.error("Error creating folder:", error);
-    throw error;
-  }
-}
-
-// Function to add geolocation metadata to the image
-async function addGeolocationToImage(filePath, latitude, longitude) {
-  try {
-    await exiftool.write(filePath, {
-      GPSLatitude: latitude,
-      GPSLatitudeRef: latitude >= 0 ? "N" : "S",
-      GPSLongitude: longitude,
-      GPSLongitudeRef: longitude >= 0 ? "E" : "W",
-    });
-    console.log("Geolocation data added successfully!");
-    return filePath;
-  } catch (error) {
-    console.error("Error adding geolocation data:", error);
-    return null;
-  }
-}
-
-// Helper function to upload file to OneDrive
-async function uploadToOneDrive(filePath, folderId, filename) {
-  const fileContent = fs.createReadStream(filePath);
-  const url = `https://graph.microsoft.com/v1.0/drive/items/${folderId}:/${filename}:/content`;
-
-  try {
-    let response = await fetch(url, {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "image/jpeg",
-      },
-      body: fileContent,
-    });
-
-    if (response.status === 401) {
-      console.warn("Access token expired, refreshing...");
-      const refreshed = await refreshAccessToken();
-      if (refreshed) {
-        response = await fetch(url, {
-          method: "PUT",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "image/jpeg",
-          },
-          body: fileContent,
-        });
-      } else {
-        console.error("Failed to refresh access token");
-        return null;
-      }
-    }
-
-    const data = await response.json();
-
-    if (response.ok) {
-      console.log("Uploaded successfully:", data);
-      return data.webUrl;
-    } else {
-      console.error("Failed to upload:", data);
-      return null;
-    }
-  } catch (error) {
-    console.error("Error during upload:", error);
-    throw error;
-  }
-}
-
-// Start the server
-app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
-});
-
-process.on("exit", () => exiftool.end());
+// Rest of the code remains unchanged

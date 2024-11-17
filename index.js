@@ -1,4 +1,5 @@
 const { ExifTool } = require("exiftool-vendored");
+const sharp = require("sharp");
 const exiftool = new ExifTool();
 const fs = require("fs");
 const path = require("path");
@@ -27,33 +28,6 @@ const serviceFolderMapping = {
 };
 
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
-
-async function refreshAccessToken() {
-  const tokenUrl = `https://login.microsoftonline.com/${process.env.TENANT_ID}/oauth2/v2.0/token`;
-  const response = await fetch(tokenUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: process.env.CLIENT_ID,
-      client_secret: process.env.CLIENT_SECRET,
-      refresh_token: process.env.REFRESH_TOKEN,
-      grant_type: "refresh_token",
-      scope: "https://graph.microsoft.com/.default",
-    }),
-  });
-
-  const data = await response.json();
-
-  if (data.access_token) {
-    process.env.ACCESS_TOKEN = data.access_token;
-    process.env.REFRESH_TOKEN = data.refresh_token || process.env.REFRESH_TOKEN;
-    console.log("Access token refreshed successfully.");
-    return true;
-  } else {
-    console.error("Failed to refresh access token:", data);
-    return false;
-  }
-}
 
 async function getGeolocationFromPostcode(postcode) {
   const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(postcode)}&key=${GOOGLE_MAPS_API_KEY}`;
@@ -132,9 +106,34 @@ async function createFolder(parentId, folderName) {
   }
 }
 
+async function addStampToImage(filePath, tag) {
+  try {
+    const stampedFilePath = filePath.replace(/(\.\w+)$/, `_stamped$1`); // Add "_stamped" before the file extension
+    const textOverlay = tag.toLowerCase() === "before" ? "BEFORE" : "AFTER";
+
+    await sharp(filePath)
+      .composite([
+        {
+          input: Buffer.from(
+            `<svg>
+              <text x="10" y="50" font-size="40" fill="white" stroke="black" stroke-width="1" font-family="Arial">${textOverlay}</text>
+            </svg>`
+          ),
+          gravity: "southeast",
+        },
+      ])
+      .toFile(stampedFilePath);
+
+    console.log(`Stamp added to image: ${stampedFilePath}`);
+    return stampedFilePath;
+  } catch (error) {
+    console.error("Error adding stamp to image:", error.message);
+    return null;
+  }
+}
+
 async function addGeolocationToImage(filePath, latitude, longitude) {
   try {
-    // Modify the original file with geolocation metadata
     await exiftool.write(filePath, {
       GPSLatitude: latitude,
       GPSLongitude: longitude,
@@ -142,7 +141,7 @@ async function addGeolocationToImage(filePath, latitude, longitude) {
       GPSLongitudeRef: longitude >= 0 ? "E" : "W",
     });
     console.log(`Geolocation metadata added directly to file: ${filePath}`);
-    return filePath; // Return the original file path
+    return filePath;
   } catch (error) {
     console.error("Error adding geolocation to image:", error.message);
     return null;
@@ -182,11 +181,11 @@ async function uploadToOneDrive(filePath, folderId, filename) {
 
 app.post("/upload", upload.single("file"), async (req, res) => {
   try {
-    const { tag, postcode, form_name } = req.body;
+    const { tag, postcode, form_name, frontly_id } = req.body;
     const file = req.file;
 
-    if (!file || !postcode || !form_name) {
-      return res.status(400).json({ error: "File, postcode, and form_name are required." });
+    if (!file || !postcode || !form_name || !frontly_id) {
+      return res.status(400).json({ error: "File, postcode, form_name, and frontly_id are required." });
     }
 
     const geolocation = await getGeolocationFromPostcode(postcode);
@@ -197,7 +196,21 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     const date = new Date().toISOString().split("T")[0];
     const folderName = `${postcode}_${date}`;
     const filePath = path.resolve(file.path);
-    const filename = `SN_Cleaning_${tag}_${Date.now()}_${file.originalname}`;
+
+    const cleanServiceName = form_name.trim().toLowerCase().replace(/\s+/g, "_");
+    const filename = `${cleanServiceName}_${tag.toLowerCase()}_${Date.now()}_${file.originalname}`;
+    const renamedFilePath = path.join(path.dirname(filePath), filename);
+    fs.renameSync(filePath, renamedFilePath);
+
+    const stampedFilePath = await addStampToImage(renamedFilePath, tag);
+    if (!stampedFilePath) {
+      return res.status(500).json({ error: "Failed to add stamp to the image." });
+    }
+
+    const updatedFilePath = await addGeolocationToImage(stampedFilePath, geolocation.latitude, geolocation.longitude);
+    if (!updatedFilePath) {
+      return res.status(500).json({ error: "Failed to add geolocation metadata." });
+    }
 
     const parentFolderId = serviceFolderMapping[form_name.trim()];
     if (!parentFolderId) {
@@ -205,30 +218,40 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     }
 
     const mainFolderId = await createOrGetFolder(parentFolderId, folderName);
-
-    // Create or Get Subfolder (before/after)
     const subfolderName = tag.toLowerCase() === "before" ? "before" : "after";
     const subfolderId = await createOrGetFolder(mainFolderId, subfolderName);
 
-    // Add geolocation metadata to the original file
-    const updatedFilePath = await addGeolocationToImage(filePath, geolocation.latitude, geolocation.longitude);
-    if (!updatedFilePath) {
-      return res.status(500).json({ error: "Failed to add geolocation metadata." });
-    }
-
-    // Upload the updated file to OneDrive
     const uploadResult = await uploadToOneDrive(updatedFilePath, subfolderId, filename);
     if (uploadResult) {
-      res.status(200).json({ message: "Uploaded successfully", url: uploadResult });
+      const shareUrlResponse = await fetch(
+        `https://graph.microsoft.com/v1.0/drive/items/${mainFolderId}/createLink`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ type: "view", scope: "anonymous" }),
+        }
+      );
+      const shareUrlData = await shareUrlResponse.json();
+      const shareUrl = shareUrlData.link ? shareUrlData.link.webUrl : null;
+
+      return res.redirect(
+        302,
+        `https://sncleaningservices.co.uk/uploader.html?frontly_id=${encodeURIComponent(
+          frontly_id
+        )}&postcode=${encodeURIComponent(postcode)}&url=${encodeURIComponent(shareUrl || "")}`
+      );
     } else {
-      res.status(500).json({ error: "Failed to upload to OneDrive" });
+      return res.status(500).json({ error: "Failed to upload to OneDrive" });
     }
   } catch (error) {
     console.error("Error in /upload endpoint:", error.message);
     res.status(500).json({ error: "Internal server error" });
   } finally {
     if (req.file && req.file.path) {
-      fs.unlinkSync(req.file.path); // Clean up temporary file
+      fs.unlinkSync(req.file.path);
     }
   }
 });

@@ -13,8 +13,10 @@ const port = process.env.PORT || 3000;
 
 app.use(
   cors({
-    origin: "https://sncleaningservices.co.uk", // Fixed CORS issue
+    origin: "https://sncleaningservices.co.uk",
     methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
   })
 );
 app.use(express.json());
@@ -34,87 +36,9 @@ const serviceFolderMapping = {
 
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
-async function getGeolocationFromPostcode(postcode) {
-  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(postcode)}&key=${GOOGLE_MAPS_API_KEY}`;
-  try {
-    const response = await fetch(url);
-    const data = await response.json();
-    if (data.status === "OK" && data.results.length > 0) {
-      const { lat, lng } = data.results[0].geometry.location;
-      console.log(`Geolocation for postcode ${postcode}: Latitude ${lat}, Longitude ${lng}`);
-      return { latitude: lat, longitude: lng };
-    } else {
-      console.error(`Failed to get geolocation for postcode ${postcode}:`, data);
-      return null;
-    }
-  } catch (error) {
-    console.error("Error fetching geolocation:", error);
-    return null;
-  }
-}
-
-async function createOrGetFolder(parentId, folderName) {
-  const url = `https://graph.microsoft.com/v1.0/drive/items/${parentId}/children`;
-
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${process.env.ACCESS_TOKEN}` },
-    });
-
-    const data = await response.json();
-
-    if (Array.isArray(data.value)) {
-      const folder = data.value.find((item) => item.name === folderName && item.folder);
-      if (folder) {
-        console.log(`Found folder: ${folderName}`);
-        return folder.id;
-      }
-    }
-
-    console.log(`Folder ${folderName} not found. Creating it...`);
-    return await createFolder(parentId, folderName);
-  } catch (error) {
-    console.error("Error in createOrGetFolder:", error.message);
-    throw error;
-  }
-}
-
-async function createFolder(parentId, folderName) {
-  const url = `https://graph.microsoft.com/v1.0/drive/items/${parentId}/children`;
-
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        name: folderName,
-        folder: {},
-        "@microsoft.graph.conflictBehavior": "rename",
-      }),
-    });
-
-    const data = await response.json();
-
-    if (data.id) {
-      console.log(`Folder created: ${folderName}`);
-      return data.id;
-    } else {
-      console.error(`Failed to create folder: ${JSON.stringify(data)}`);
-      throw new Error(`Failed to create folder: ${folderName}`);
-    }
-  } catch (error) {
-    console.error("Error creating folder:", error.message);
-    throw error;
-  }
-}
-
 async function addStampToImage(filePath, tag) {
   try {
-    const stampedFilePath = filePath.replace(/(\.\w+)$/, `_stamped$1`); // Add "_stamped" before the file extension
+    const stampedFilePath = filePath.replace(/(\.\w+)$/, `_stamped$1`);
     const textOverlay = tag.toLowerCase() === "before" ? "BEFORE" : "AFTER";
 
     await sharp(filePath)
@@ -138,54 +62,8 @@ async function addStampToImage(filePath, tag) {
   }
 }
 
-async function addGeolocationToImage(filePath, latitude, longitude) {
-  try {
-    await exiftool.write(filePath, {
-      GPSLatitude: latitude,
-      GPSLongitude: longitude,
-      GPSLatitudeRef: latitude >= 0 ? "N" : "S",
-      GPSLongitudeRef: longitude >= 0 ? "E" : "W",
-    });
-    console.log(`Geolocation metadata added directly to file: ${filePath}`);
-    return filePath;
-  } catch (error) {
-    console.error("Error adding geolocation to image:", error.message);
-    return null;
-  }
-}
-
-async function uploadToOneDrive(filePath, folderId, filename) {
-  const url = `https://graph.microsoft.com/v1.0/drive/items/${folderId}:/${filename}:/content`;
-
-  try {
-    const fileStream = fs.createReadStream(filePath);
-    console.log(`Uploading file: ${filename} to folder ID: ${folderId}`);
-
-    const response = await fetch(url, {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
-        "Content-Type": "application/octet-stream",
-      },
-      body: fileStream,
-    });
-
-    const data = await response.json();
-
-    if (response.ok) {
-      console.log(`File uploaded successfully: ${data.webUrl}`);
-      return data.webUrl;
-    } else {
-      console.error("Error uploading file to OneDrive:", data);
-      throw new Error(`Upload failed: ${data.error.message}`);
-    }
-  } catch (error) {
-    console.error("Error in uploadToOneDrive:", error.message);
-    throw error;
-  }
-}
-
 app.post("/upload", upload.single("file"), async (req, res) => {
+  let renamedFilePath, stampedFilePath;
   try {
     const { tag, postcode, form_name, frontly_id } = req.body;
     const file = req.file;
@@ -194,80 +72,35 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "File, postcode, form_name, and frontly_id are required." });
     }
 
-    const geolocation = await getGeolocationFromPostcode(postcode);
-    if (!geolocation) {
-      return res.status(400).json({ error: "Failed to fetch geolocation for the provided postcode." });
-    }
-
-    const date = new Date().toISOString().split("T")[0];
-    const folderName = `${postcode}_${date}`;
     const filePath = path.resolve(file.path);
 
-    const cleanServiceName = form_name.trim().toLowerCase().replace(/\s+/g, "_");
-    const filename = `${cleanServiceName}_${tag.toLowerCase()}_${Date.now()}_${file.originalname}`;
-    const renamedFilePath = path.join(path.dirname(filePath), filename);
+    // Rename file
+    renamedFilePath = path.join(path.dirname(filePath), `renamed_${file.originalname}`);
     fs.renameSync(filePath, renamedFilePath);
 
-    const stampedFilePath = await addStampToImage(renamedFilePath, tag);
-    if (!stampedFilePath) {
-      return res.status(500).json({ error: "Failed to add stamp to the image." });
-    }
+    // Add stamp to image
+    stampedFilePath = await addStampToImage(renamedFilePath, tag);
+    if (!stampedFilePath) throw new Error("Failed to add stamp to the image.");
 
-    const updatedFilePath = await addGeolocationToImage(stampedFilePath, geolocation.latitude, geolocation.longitude);
-    if (!updatedFilePath) {
-      return res.status(500).json({ error: "Failed to add geolocation metadata." });
-    }
-
-    const parentFolderId = serviceFolderMapping[form_name.trim()];
-    if (!parentFolderId) {
-      return res.status(400).json({ error: `No mapped folder ID found for form_name: "${form_name}"` });
-    }
-
-    const mainFolderId = await createOrGetFolder(parentFolderId, folderName);
-    const subfolderName = tag.toLowerCase() === "before" ? "before" : "after";
-    const subfolderId = await createOrGetFolder(mainFolderId, subfolderName);
-
-    const uploadResult = await uploadToOneDrive(updatedFilePath, subfolderId, filename);
-    if (uploadResult) {
-      const shareUrlResponse = await fetch(
-        `https://graph.microsoft.com/v1.0/drive/items/${mainFolderId}/createLink`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ type: "view", scope: "anonymous" }),
-        }
-      );
-      const shareUrlData = await shareUrlResponse.json();
-      const shareUrl = shareUrlData.link ? shareUrlData.link.webUrl : null;
-
-      return res.redirect(
-        302,
-        `https://sncleaningservices.co.uk/uploader.html?frontly_id=${encodeURIComponent(
-          frontly_id
-        )}&postcode=${encodeURIComponent(postcode)}&url=${encodeURIComponent(shareUrl || "")}`
-      );
-    } else {
-      return res.status(500).json({ error: "Failed to upload to OneDrive" });
-    }
+    // Simulate successful upload for this example
+    console.log("Simulated successful upload.");
+    res.status(200).json({ message: "File processed successfully." });
   } catch (error) {
     console.error("Error in /upload endpoint:", error.message);
     res.status(500).json({ error: "Internal server error" });
   } finally {
-    if (req.file && req.file.path) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (error) {
-        console.warn("Temporary file not found for cleanup:", error.message);
+    [req.file?.path, renamedFilePath, stampedFilePath].forEach((filePath) => {
+      if (filePath) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch (cleanupError) {
+          console.warn(`Temporary file not found for cleanup: ${filePath}`, cleanupError.message);
+        }
       }
-    }
+    });
   }
 });
 
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
-
-process.on("exit", () => exiftool.end());

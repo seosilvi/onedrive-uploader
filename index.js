@@ -134,15 +134,15 @@ async function createFolder(parentId, folderName) {
 
 async function addGeolocationToImage(filePath, latitude, longitude) {
   try {
-    const modifiedFilePath = `${filePath}-geo`;
+    // Modify the original file with geolocation metadata
     await exiftool.write(filePath, {
       GPSLatitude: latitude,
       GPSLongitude: longitude,
       GPSLatitudeRef: latitude >= 0 ? "N" : "S",
       GPSLongitudeRef: longitude >= 0 ? "E" : "W",
     });
-    console.log(`Geolocation metadata added to file: ${modifiedFilePath}`);
-    return modifiedFilePath;
+    console.log(`Geolocation metadata added directly to file: ${filePath}`);
+    return filePath; // Return the original file path
   } catch (error) {
     console.error("Error adding geolocation to image:", error.message);
     return null;
@@ -210,17 +210,18 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     const subfolderName = tag.toLowerCase() === "before" ? "before" : "after";
     const subfolderId = await createOrGetFolder(mainFolderId, subfolderName);
 
-    const modifiedFilePath = await addGeolocationToImage(filePath, geolocation.latitude, geolocation.longitude);
+    // Add geolocation metadata to the original file
+    const updatedFilePath = await addGeolocationToImage(filePath, geolocation.latitude, geolocation.longitude);
+    if (!updatedFilePath) {
+      return res.status(500).json({ error: "Failed to add geolocation metadata." });
+    }
 
-    if (modifiedFilePath) {
-      const uploadResult = await uploadToOneDrive(modifiedFilePath, subfolderId, filename);
-      if (uploadResult) {
-        res.status(200).json({ message: "Uploaded successfully", url: uploadResult });
-      } else {
-        res.status(500).json({ error: "Failed to upload to OneDrive" });
-      }
+    // Upload the updated file to OneDrive
+    const uploadResult = await uploadToOneDrive(updatedFilePath, subfolderId, filename);
+    if (uploadResult) {
+      res.status(200).json({ message: "Uploaded successfully", url: uploadResult });
     } else {
-      res.status(500).json({ error: "Failed to add geolocation metadata" });
+      res.status(500).json({ error: "Failed to upload to OneDrive" });
     }
   } catch (error) {
     console.error("Error in /upload endpoint:", error.message);

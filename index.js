@@ -225,6 +225,8 @@ app.post("/batch-upload", upload.array("files", 200), async (req, res) => {
       fs.unlinkSync(file.path);
     }
 
+    // Generate the shared link for the MAIN folder (e.g., N198th_17-112024)
+    console.log(`Generating shared link for main folder: ${folderName}`);
     const shareResponse = await fetch(
       `https://graph.microsoft.com/v1.0/drive/items/${mainFolderId}/createLink`,
       {
@@ -238,8 +240,14 @@ app.post("/batch-upload", upload.array("files", 200), async (req, res) => {
     );
 
     const shareData = await shareResponse.json();
-    const shareUrl = shareData.link ? shareData.link.webUrl : null;
+    if (!shareData.link || !shareData.link.webUrl) {
+      throw new Error("Failed to generate shared link for the main folder.");
+    }
+    const shareUrl = shareData.link.webUrl;
 
+    console.log(`Main folder shared URL: ${shareUrl}`);
+
+    // Send the shared URL for the MAIN folder to the webhook
     await sendToWebhook(frontly_id, postcode, shareUrl);
 
     res.status(200).json({ message: "All files uploaded successfully", files: uploadedFiles });

@@ -76,6 +76,7 @@ async function getGeolocationFromPostcode(postcode) {
 
 async function createOrGetFolder(parentId, folderName) {
   const url = `https://graph.microsoft.com/v1.0/drive/items/${parentId}/children`;
+
   try {
     const response = await fetch(url, {
       method: "GET",
@@ -87,19 +88,22 @@ async function createOrGetFolder(parentId, folderName) {
     if (Array.isArray(data.value)) {
       const folder = data.value.find((item) => item.name === folderName && item.folder);
       if (folder) {
+        console.log(`Found folder: ${folderName}`);
         return folder.id;
       }
     }
 
+    console.log(`Folder ${folderName} not found. Creating it...`);
     return await createFolder(parentId, folderName);
   } catch (error) {
-    console.error("Error in createOrGetFolder:", error);
+    console.error("Error in createOrGetFolder:", error.message);
     throw error;
   }
 }
 
 async function createFolder(parentId, folderName) {
   const url = `https://graph.microsoft.com/v1.0/drive/items/${parentId}/children`;
+
   try {
     const response = await fetch(url, {
       method: "POST",
@@ -115,13 +119,15 @@ async function createFolder(parentId, folderName) {
     });
 
     const data = await response.json();
+
     if (data.id) {
+      console.log(`Folder created: ${folderName}`);
       return data.id;
     } else {
       throw new Error(`Failed to create folder: ${folderName}`);
     }
   } catch (error) {
-    console.error("Error creating folder:", error);
+    console.error("Error creating folder:", error.message);
     throw error;
   }
 }
@@ -135,9 +141,10 @@ async function addGeolocationToImage(filePath, latitude, longitude) {
       GPSLatitudeRef: latitude >= 0 ? "N" : "S",
       GPSLongitudeRef: longitude >= 0 ? "E" : "W",
     });
+    console.log(`Geolocation metadata added to file: ${modifiedFilePath}`);
     return modifiedFilePath;
   } catch (error) {
-    console.error("Error adding geolocation to image:", error);
+    console.error("Error adding geolocation to image:", error.message);
     return null;
   }
 }
@@ -147,6 +154,8 @@ async function uploadToOneDrive(filePath, folderId, filename) {
 
   try {
     const fileStream = fs.createReadStream(filePath);
+    console.log(`Uploading file: ${filename} to folder ID: ${folderId}`);
+
     const response = await fetch(url, {
       method: "PUT",
       headers: {
@@ -163,11 +172,11 @@ async function uploadToOneDrive(filePath, folderId, filename) {
       return data.webUrl;
     } else {
       console.error("Error uploading file to OneDrive:", data);
-      return null;
+      throw new Error(`Upload failed: ${data.error.message}`);
     }
   } catch (error) {
-    console.error("Error in uploadToOneDrive:", error);
-    return null;
+    console.error("Error in uploadToOneDrive:", error.message);
+    throw error;
   }
 }
 
@@ -195,11 +204,16 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: `No mapped folder ID found for form_name: "${form_name}"` });
     }
 
-    const targetFolderId = await createOrGetFolder(parentFolderId, folderName);
+    const mainFolderId = await createOrGetFolder(parentFolderId, folderName);
+
+    // Create or Get Subfolder (before/after)
+    const subfolderName = tag.toLowerCase() === "before" ? "before" : "after";
+    const subfolderId = await createOrGetFolder(mainFolderId, subfolderName);
+
     const modifiedFilePath = await addGeolocationToImage(filePath, geolocation.latitude, geolocation.longitude);
 
     if (modifiedFilePath) {
-      const uploadResult = await uploadToOneDrive(modifiedFilePath, targetFolderId, filename);
+      const uploadResult = await uploadToOneDrive(modifiedFilePath, subfolderId, filename);
       if (uploadResult) {
         res.status(200).json({ message: "Uploaded successfully", url: uploadResult });
       } else {
@@ -209,10 +223,11 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       res.status(500).json({ error: "Failed to add geolocation metadata" });
     }
   } catch (error) {
+    console.error("Error in /upload endpoint:", error.message);
     res.status(500).json({ error: "Internal server error" });
   } finally {
     if (req.file && req.file.path) {
-      fs.unlinkSync(req.file.path);
+      fs.unlinkSync(req.file.path); // Clean up temporary file
     }
   }
 });

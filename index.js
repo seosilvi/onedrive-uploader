@@ -35,7 +35,7 @@ const serviceFolderMapping = {
 };
 
 // Google Maps API Key
-const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 
 // Helper function to refresh the access token
 async function refreshAccessToken() {
@@ -70,7 +70,7 @@ async function refreshAccessToken() {
 async function getGeolocationFromPostcode(postcode) {
   const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
     postcode
-  )}&key=${GOOGLE_MAPS_API_KEY}`;
+  )}&key=${GOOGLE_API_KEY}`;
 
   try {
     const response = await fetch(url);

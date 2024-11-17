@@ -11,7 +11,12 @@ const multer = require("multer");
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.use(cors({ origin: "https://sncleaningservices.co.uk" }));
+app.use(
+  cors({
+    origin: "https://sncleaningservices.co.uk", // Fixed CORS issue
+    methods: ["GET", "POST"],
+  })
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -98,6 +103,7 @@ async function createFolder(parentId, folderName) {
       console.log(`Folder created: ${folderName}`);
       return data.id;
     } else {
+      console.error(`Failed to create folder: ${JSON.stringify(data)}`);
       throw new Error(`Failed to create folder: ${folderName}`);
     }
   } catch (error) {
@@ -251,7 +257,11 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   } finally {
     if (req.file && req.file.path) {
-      fs.unlinkSync(req.file.path);
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (error) {
+        console.warn("Temporary file not found for cleanup:", error.message);
+      }
     }
   }
 });

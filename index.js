@@ -172,70 +172,80 @@ async function sendToWebhook(frontly_id, postcode, shareUrl) {
   }
 }
 
-app.post("/upload", upload.single("file"), async (req, res) => {
+app.post("/batch-upload", upload.array("files", 200), async (req, res) => {
   try {
     const { tag, postcode, form_name, frontly_id } = req.body;
-    const file = req.file;
+    const files = req.files;
 
-    if (!file || !postcode || !form_name || !frontly_id) {
-      return res.status(400).json({ error: "File, postcode, form_name, and frontly_id are required." });
+    if (!files || files.length === 0 || !postcode || !form_name || !frontly_id) {
+      return res.status(400).json({
+        error: "Files, postcode, form_name, and frontly_id are required.",
+      });
     }
 
     const geolocation = await getGeolocationFromPostcode(postcode);
     if (!geolocation) {
-      return res.status(400).json({ error: "Failed to fetch geolocation for the provided postcode." });
-    }
-
-    const filePath = path.resolve(file.path);
-    const updatedFilePath = await addGeolocationToImage(filePath, geolocation.latitude, geolocation.longitude);
-    if (!updatedFilePath) {
-      return res.status(500).json({ error: "Failed to add geolocation metadata to image." });
+      return res
+        .status(400)
+        .json({ error: "Failed to fetch geolocation for the provided postcode." });
     }
 
     const date = new Date().toISOString().split("T")[0];
     const folderName = `${postcode}_${date}`;
-    const filename = `SN_Cleaning_${tag}_${Date.now()}_${file.originalname}`;
 
     const parentFolderId = serviceFolderMapping[form_name.trim()];
     if (!parentFolderId) {
-      return res.status(400).json({ error: `No mapped folder ID found for form_name: "${form_name}"` });
+      return res
+        .status(400)
+        .json({ error: `No mapped folder ID found for form_name: "${form_name}"` });
     }
 
     const mainFolderId = await createOrGetFolder(parentFolderId, folderName);
     const subfolderName = tag.toLowerCase() === "before" ? "before" : "after";
     const subfolderId = await createOrGetFolder(mainFolderId, subfolderName);
 
-    const uploadResult = await uploadToOneDrive(updatedFilePath, subfolderId, filename);
-    if (uploadResult) {
-      const shareResponse = await fetch(`https://graph.microsoft.com/v1.0/drive/items/${mainFolderId}/createLink`, {
+    const uploadedFiles = [];
+
+    for (const file of files) {
+      const filePath = path.resolve(file.path);
+      const updatedFilePath = await addGeolocationToImage(
+        filePath,
+        geolocation.latitude,
+        geolocation.longitude
+      );
+      if (!updatedFilePath) continue;
+
+      const filename = `SN_Cleaning_${tag}_${Date.now()}_${file.originalname}`;
+      const uploadResult = await uploadToOneDrive(updatedFilePath, subfolderId, filename);
+
+      if (uploadResult) {
+        uploadedFiles.push({ file: file.originalname, url: uploadResult });
+      }
+
+      fs.unlinkSync(file.path);
+    }
+
+    const shareResponse = await fetch(
+      `https://graph.microsoft.com/v1.0/drive/items/${mainFolderId}/createLink`,
+      {
         method: "POST",
         headers: {
           Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ type: "view", scope: "anonymous" }),
-      });
-
-      const shareData = await shareResponse.json();
-      const shareUrl = shareData.link ? shareData.link.webUrl : null;
-
-      await sendToWebhook(frontly_id, postcode, shareUrl);
-
-      res.status(200).json({ message: "Uploaded successfully", share_url: shareUrl });
-    } else {
-      res.status(500).json({ error: "Failed to upload to OneDrive" });
-    }
-  } catch (error) {
-    console.error("Error in /upload endpoint:", error.message);
-    res.status(500).json({ error: "Internal server error" });
-  } finally {
-    if (req.file?.path) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (cleanupError) {
-        console.warn("Temporary file not found for cleanup:", cleanupError.message);
       }
-    }
+    );
+
+    const shareData = await shareResponse.json();
+    const shareUrl = shareData.link ? shareData.link.webUrl : null;
+
+    await sendToWebhook(frontly_id, postcode, shareUrl);
+
+    res.status(200).json({ message: "All files uploaded successfully", files: uploadedFiles });
+  } catch (error) {
+    console.error("Error in /batch-upload endpoint:", error.message);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 

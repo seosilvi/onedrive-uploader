@@ -35,7 +35,7 @@ const serviceFolderMapping = {
 };
 
 // Google Maps API Key
-const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 
 // Helper function to refresh the access token
 async function refreshAccessToken() {

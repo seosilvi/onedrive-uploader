@@ -47,6 +47,23 @@ async function getGeolocationFromPostcode(postcode) {
   }
 }
 
+async function addGeolocationToImage(filePath, latitude, longitude) {
+  console.log(`Adding geolocation: Lat=${latitude}, Lng=${longitude} to ${filePath}`);
+  try {
+    await exiftool.write(filePath, {
+      GPSLatitude: latitude,
+      GPSLongitude: longitude,
+      GPSLatitudeRef: latitude >= 0 ? "N" : "S",
+      GPSLongitudeRef: longitude >= 0 ? "E" : "W",
+    });
+    console.log(`Geolocation metadata added to file: ${filePath}`);
+    return filePath;
+  } catch (error) {
+    console.error("Error adding geolocation to image:", error.message);
+    return null;
+  }
+}
+
 async function createOrGetFolder(parentId, folderName) {
   const url = `https://graph.microsoft.com/v1.0/drive/items/${parentId}/children`;
 
@@ -156,7 +173,6 @@ async function sendToWebhook(frontly_id, postcode, shareUrl) {
 }
 
 app.post("/upload", upload.single("file"), async (req, res) => {
-  let renamedFilePath;
   try {
     const { tag, postcode, form_name, frontly_id } = req.body;
     const file = req.file;
@@ -165,9 +181,19 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "File, postcode, form_name, and frontly_id are required." });
     }
 
+    const geolocation = await getGeolocationFromPostcode(postcode);
+    if (!geolocation) {
+      return res.status(400).json({ error: "Failed to fetch geolocation for the provided postcode." });
+    }
+
+    const filePath = path.resolve(file.path);
+    const updatedFilePath = await addGeolocationToImage(filePath, geolocation.latitude, geolocation.longitude);
+    if (!updatedFilePath) {
+      return res.status(500).json({ error: "Failed to add geolocation metadata to image." });
+    }
+
     const date = new Date().toISOString().split("T")[0];
     const folderName = `${postcode}_${date}`;
-    const filePath = path.resolve(file.path);
     const filename = `SN_Cleaning_${tag}_${Date.now()}_${file.originalname}`;
 
     const parentFolderId = serviceFolderMapping[form_name.trim()];
@@ -179,7 +205,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     const subfolderName = tag.toLowerCase() === "before" ? "before" : "after";
     const subfolderId = await createOrGetFolder(mainFolderId, subfolderName);
 
-    const uploadResult = await uploadToOneDrive(filePath, subfolderId, filename);
+    const uploadResult = await uploadToOneDrive(updatedFilePath, subfolderId, filename);
     if (uploadResult) {
       const shareResponse = await fetch(`https://graph.microsoft.com/v1.0/drive/items/${mainFolderId}/createLink`, {
         method: "POST",

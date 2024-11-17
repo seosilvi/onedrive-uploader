@@ -35,7 +35,7 @@ const serviceFolderMapping = {
 };
 
 // Google Maps API Key
-const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
+const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
 // Helper function to refresh the access token
 async function refreshAccessToken() {
@@ -70,7 +70,7 @@ async function refreshAccessToken() {
 async function getGeolocationFromPostcode(postcode) {
   const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
     postcode
-  )}&key=${GOOGLE_API_KEY}`;
+  )}&key=${GOOGLE_MAPS_API_KEY}`;
 
   try {
     const response = await fetch(url);
@@ -88,6 +88,92 @@ async function getGeolocationFromPostcode(postcode) {
     console.error("Error fetching geolocation:", error);
     return null;
   }
+}
+
+// Helper function to create or get a folder
+async function createOrGetFolder(parentId, folderName) {
+  const url = `https://graph.microsoft.com/v1.0/drive/items/${parentId}/children`;
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${process.env.ACCESS_TOKEN}` },
+    });
+
+    const data = await response.json();
+
+    console.log("Folder search response:", data);
+
+    if (Array.isArray(data.value)) {
+      const folder = data.value.find((item) => item.name === folderName && item.folder);
+      if (folder) {
+        console.log(`Found existing folder: ${folderName}`);
+        return folder.id;
+      }
+    }
+
+    // Folder not found, create it
+    return await createFolder(parentId, folderName);
+  } catch (error) {
+    console.error("Error in createOrGetFolder:", error);
+    throw error;
+  }
+}
+
+// Helper function to create a folder in OneDrive
+async function createFolder(parentId, folderName) {
+  const url = `https://graph.microsoft.com/v1.0/drive/items/${parentId}/children`;
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: folderName,
+        folder: {},
+        "@microsoft.graph.conflictBehavior": "rename",
+      }),
+    });
+
+    const data = await response.json();
+
+    if (data.id) {
+      console.log(`Folder created: ${folderName}`);
+      return data.id;
+    } else {
+      throw new Error(`Failed to create folder: ${folderName}`);
+    }
+  } catch (error) {
+    console.error("Error creating folder:", error);
+    throw error;
+  }
+}
+
+// Helper function to add geolocation to the image
+async function addGeolocationToImage(filePath, latitude, longitude) {
+  try {
+    const modifiedFilePath = `${filePath}-geo`;
+    await exiftool.write(filePath, {
+      GPSLatitude: latitude,
+      GPSLongitude: longitude,
+      GPSLatitudeRef: latitude >= 0 ? "N" : "S",
+      GPSLongitudeRef: longitude >= 0 ? "E" : "W",
+    });
+    console.log("Geolocation metadata added to file:", modifiedFilePath);
+    return modifiedFilePath;
+  } catch (error) {
+    console.error("Error adding geolocation to image:", error);
+    return null;
+  }
+}
+
+// Helper function to upload file to OneDrive
+async function uploadToOneDrive(filePath, folderId, filename) {
+  console.log(`Simulating file upload: ${filename} to folder ID ${folderId}`);
+  return `https://onedrive.live.com/folder/${folderId}/${filename}`;
 }
 
 // Upload endpoint to receive the data
@@ -155,30 +241,6 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     }
   }
 });
-
-// Helper function to add geolocation to the image
-async function addGeolocationToImage(filePath, latitude, longitude) {
-  try {
-    const modifiedFilePath = `${filePath}-geo`;
-    await exiftool.write(filePath, {
-      GPSLatitude: latitude,
-      GPSLongitude: longitude,
-      GPSLatitudeRef: latitude >= 0 ? "N" : "S",
-      GPSLongitudeRef: longitude >= 0 ? "E" : "W",
-    });
-    console.log("Geolocation metadata added to file:", modifiedFilePath);
-    return modifiedFilePath;
-  } catch (error) {
-    console.error("Error adding geolocation to image:", error);
-    return null;
-  }
-}
-
-// Helper function to upload file to OneDrive (replace with real implementation)
-async function uploadToOneDrive(filePath, folderId, filename) {
-  console.log(`Simulating file upload: ${filename} to folder ID ${folderId}`);
-  return `https://onedrive.live.com/folder/${folderId}/${filename}`;
-}
 
 // Start the server
 app.listen(port, () => {

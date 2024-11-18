@@ -65,10 +65,20 @@ async function refreshAccessToken() {
 }
 
 async function getValidAccessToken() {
+    console.log("Current time:", new Date().toISOString());
+    console.log("Token expiry time:", new Date(tokenExpiryTime).toISOString());
+
     if (Date.now() >= tokenExpiryTime) {
         console.log("Access token expired. Refreshing...");
-        return await refreshAccessToken();
+        try {
+            return await refreshAccessToken();
+        } catch (error) {
+            console.error("Failed to refresh access token:", error.message);
+            throw error;
+        }
     }
+
+    console.log("Using valid access token.");
     return accessToken;
 }
 
@@ -138,6 +148,8 @@ async function createFolder(parentId, folderName) {
 
     try {
         const token = await getValidAccessToken();
+        console.log("Using access token:", token);
+
         const response = await fetch(url, {
             method: "POST",
             headers: {
@@ -151,8 +163,9 @@ async function createFolder(parentId, folderName) {
             }),
         });
 
-        // Debugging: Log the full response from Microsoft
         console.log(`Microsoft Response Status: ${response.status}`);
+        console.log("Response Headers:", response.headers.raw());
+
         if (!response.ok) {
             const errorText = await response.text();
             console.error(`Error creating folder: ${errorText}`);
@@ -174,9 +187,8 @@ async function createFolder(parentId, folderName) {
     }
 }
 
-// Function to send to Albato Webhook with multiple files
 async function sendAllToAlbatoWebhook(frontly_id, postcode, uploadedFiles) {
-    const webhookUrl = "https://h.albato.com/wh/38/1lfj095/wBihkbfHSpJ_WMXXh_xVIbHcjSY4_rWDwXIntKhzHzE/";
+    const webhookUrl = "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTZjMDYzZTA0MzQ1MjY4NTUzYzUxMzYi_pc";
 
     try {
         const payload = {
@@ -237,7 +249,6 @@ async function uploadToOneDrive(filePath, folderId, filename) {
     }
 }
 
-// Function to send Pabbly webhook
 async function sendToPabblyWebhook(frontly_id, postcode, folderUrl) {
     const webhookUrl = "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTZjMDYzMTA0M2M1MjZjNTUzMzUxMzEi_pc";
 

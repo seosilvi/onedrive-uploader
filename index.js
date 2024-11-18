@@ -16,14 +16,15 @@ app.use(express.urlencoded({ extended: true }));
 
 const upload = multer({ dest: "uploads/" });
 
+// Service folder mapping with lowercase keys
 const serviceFolderMapping = {
-  "Airbnb Cleaning": "01HRAU3CKVL2NOUI3KNZFIMQGWF2W6I6KE",
-  "Domestic Cleaning": "01HRAU3CJNFG44TQSQ5RBJOKXJNO7MGHHQ",
-  "End Of Tenancy Cleaning": "01HRAU3CMT64WNWGRAENAJ4KECYBFO4Y6C",
-  "After Builders Cleaning": "01HRAU3CIERAXDQ73IJFDLT73OV7WR2HIM",
-  "Commercial Cleaning": "01HRAU3CMUE53HAO7J6BGJFN64XZMQQEUB",
-  "Deep House Cleaning": "01HRAU3CMX5K7X6VAC2NHK2DK3H6R5IGF7",
-  "Carpet Cleaning": "01HRAU3CJJ7PDR5EP5GRHKHVAC7RQRA3NG",
+  "airbnb cleaning": "01HRAU3CKVL2NOUI3KNZFIMQGWF2W6I6KE",
+  "domestic cleaning": "01HRAU3CJNFG44TQSQ5RBJOKXJNO7MGHHQ",
+  "end of tenancy cleaning": "01HRAU3CMT64WNWGRAENAJ4KECYBFO4Y6C",
+  "after builders cleaning": "01HRAU3CIERAXDQ73IJFDLT73OV7WR2HIM",
+  "commercial cleaning": "01HRAU3CMUE53HAO7J6BGJFN64XZMQQEUB",
+  "deep house cleaning": "01HRAU3CMX5K7X6VAC2NHK2DK3H6R5IGF7",
+  "carpet cleaning": "01HRAU3CJJ7PDR5EP5GRHKHVAC7RQRA3NG",
 };
 
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
@@ -183,6 +184,7 @@ app.post("/batch-upload", upload.array("files", 200), async (req, res) => {
       });
     }
 
+    console.log(`Received form_name: "${form_name}"`);
     const geolocation = await getGeolocationFromPostcode(postcode);
     if (!geolocation) {
       return res
@@ -193,8 +195,9 @@ app.post("/batch-upload", upload.array("files", 200), async (req, res) => {
     const date = new Date().toISOString().split("T")[0];
     const folderName = `${postcode}_${date}`;
 
-    const parentFolderId = serviceFolderMapping[form_name.trim()];
+    const parentFolderId = serviceFolderMapping[form_name.trim().toLowerCase()];
     if (!parentFolderId) {
+      console.error(`No folder mapping found for form_name: "${form_name}"`);
       return res
         .status(400)
         .json({ error: `No mapped folder ID found for form_name: "${form_name}"` });
@@ -225,7 +228,6 @@ app.post("/batch-upload", upload.array("files", 200), async (req, res) => {
       fs.unlinkSync(file.path);
     }
 
-    // Generate the shared link for the MAIN folder (e.g., N198th_17-112024)
     console.log(`Generating shared link for main folder: ${folderName}`);
     const shareResponse = await fetch(
       `https://graph.microsoft.com/v1.0/drive/items/${mainFolderId}/createLink`,
@@ -246,8 +248,6 @@ app.post("/batch-upload", upload.array("files", 200), async (req, res) => {
     const shareUrl = shareData.link.webUrl;
 
     console.log(`Main folder shared URL: ${shareUrl}`);
-
-    // Send the shared URL for the MAIN folder to the webhook
     await sendToWebhook(frontly_id, postcode, shareUrl);
 
     res.status(200).json({ message: "All files uploaded successfully", files: uploadedFiles });

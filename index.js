@@ -21,6 +21,7 @@ let accessToken = process.env.ACCESS_TOKEN;
 let refreshToken = process.env.REFRESH_TOKEN;
 let tokenExpiryTime = Date.now() + 3600 * 1000; // Default expiry set for 1 hour from now
 
+// Debugging Added: Refresh Access Token
 async function refreshAccessToken() {
   const url = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
   const body = new URLSearchParams({
@@ -32,6 +33,10 @@ async function refreshAccessToken() {
   });
 
   try {
+    console.log("[DEBUG] Attempting to refresh the access token...");
+    console.log("[DEBUG] Client ID:", process.env.CLIENT_ID);
+    console.log("[DEBUG] Redirect URI:", process.env.REDIRECT_URI);
+
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -40,17 +45,19 @@ async function refreshAccessToken() {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("Failed to refresh token:", errorText);
+      console.error("[ERROR] Failed to refresh token. Response text:", errorText);
       throw new Error("Token refresh failed.");
     }
 
     const data = await response.json();
-    console.log("Token refreshed successfully:", data);
+    console.log("[DEBUG] Token refreshed successfully:", data);
 
     // Update tokens and expiry
     accessToken = data.access_token;
     refreshToken = data.refresh_token;
     tokenExpiryTime = Date.now() + data.expires_in * 1000;
+
+    console.log("[DEBUG] New access token expires at:", new Date(tokenExpiryTime));
 
     // Optionally, update environment variables or storage
     process.env.ACCESS_TOKEN = accessToken;
@@ -58,16 +65,28 @@ async function refreshAccessToken() {
 
     return accessToken;
   } catch (error) {
-    console.error("Error refreshing access token:", error.message);
+    console.error("[ERROR] Error refreshing access token:", error.message);
+    console.error("[ERROR] Stack trace:", error.stack);
     throw error;
   }
 }
 
+// Debugging Added: Get Valid Access Token
 async function getValidAccessToken() {
+  console.log("[DEBUG] Checking if access token is still valid...");
+  console.log("[DEBUG] Current time:", new Date());
+  console.log("[DEBUG] Token expiry time:", new Date(tokenExpiryTime));
+
   if (Date.now() >= tokenExpiryTime) {
-    console.log("Access token expired. Refreshing...");
-    return await refreshAccessToken();
+    console.log("[DEBUG] Access token expired. Refreshing...");
+    try {
+      return await refreshAccessToken();
+    } catch (error) {
+      console.error("[ERROR] Failed to refresh access token:", error.message);
+      throw error;
+    }
   }
+  console.log("[DEBUG] Access token is still valid.");
   return accessToken;
 }
 
@@ -87,27 +106,30 @@ const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 async function getGeolocationFromPostcode(postcode) {
   const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(postcode)}&key=${GOOGLE_MAPS_API_KEY}`;
   try {
+    console.log("[DEBUG] Fetching geolocation for postcode:", postcode);
     const response = await fetch(url);
     const data = await response.json();
     if (data.status === "OK" && data.results.length > 0) {
       const { lat, lng } = data.results[0].geometry.location;
-      console.log(`Geolocation for postcode ${postcode}: Latitude ${lat}, Longitude ${lng}`);
+      console.log(`[DEBUG] Geolocation for postcode ${postcode}: Latitude ${lat}, Longitude ${lng}`);
       return { latitude: lat, longitude: lng };
     } else {
-      console.error(`Failed to get geolocation for postcode ${postcode}:`, data);
+      console.error(`[ERROR] Failed to get geolocation for postcode ${postcode}:`, data);
       return null;
     }
   } catch (error) {
-    console.error("Error fetching geolocation:", error);
+    console.error("[ERROR] Error fetching geolocation:", error.message);
     return null;
   }
 }
 
+// Debugging Added Throughout Folder Management
 async function createOrGetFolder(parentId, folderName) {
   const url = `https://graph.microsoft.com/v1.0/drive/items/${parentId}/children`;
 
   try {
     const token = await getValidAccessToken();
+    console.log(`[DEBUG] Checking for folder: ${folderName} in parent folder: ${parentId}`);
     const response = await fetch(url, {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
@@ -118,15 +140,15 @@ async function createOrGetFolder(parentId, folderName) {
     if (Array.isArray(data.value)) {
       const folder = data.value.find((item) => item.name === folderName && item.folder);
       if (folder) {
-        console.log(`Found folder: ${folderName}`);
+        console.log(`[DEBUG] Found folder: ${folderName}`);
         return folder.id;
       }
     }
 
-    console.log(`Folder ${folderName} not found. Creating it...`);
+    console.log(`[DEBUG] Folder ${folderName} not found. Creating it...`);
     return await createFolder(parentId, folderName);
   } catch (error) {
-    console.error("Error in createOrGetFolder:", error.message);
+    console.error("[ERROR] Error in createOrGetFolder:", error.message);
     throw error;
   }
 }
@@ -339,3 +361,4 @@ app.listen(port, () => {
 });
 
 process.on("exit", () => exiftool.end());
+

@@ -187,7 +187,7 @@ async function createFolder(parentId, folderName) {
 
 // Function to send to Albato Webhook with multiple files
 async function sendAllToAlbatoWebhook(frontly_id, postcode, uploadedFiles) {
-  const webhookUrl = "https://h.albato.com/wh/38/1lfj095/wBihkbfHSpJ_WMXXh_xVIbHcjSY4_rWDwXIntKhzHzE/";
+  const webhookUrl = "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTZjMDYzZTA0MzQ1MjY4NTUzYzUxMzYi_pc";
 
   try {
     const payload = {

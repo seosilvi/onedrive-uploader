@@ -16,6 +16,10 @@ app.use(express.urlencoded({ extended: true }));
 
 const upload = multer({ dest: "uploads/" });
 
+let accessToken = process.env.ACCESS_TOKEN; // Store access token
+let refreshToken = process.env.REFRESH_TOKEN; // Store refresh token
+let tokenExpiryTime = Date.now() + 3600 * 1000; // Example: 1 hour from now
+
 // Service folder mapping with lowercase keys
 const serviceFolderMapping = {
   "airbnb cleaning": "01HRAU3CKVL2NOUI3KNZFIMQGWF2W6I6KE",
@@ -28,6 +32,59 @@ const serviceFolderMapping = {
 };
 
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
+
+// Function to refresh the access token
+async function refreshAccessToken() {
+  const url = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
+
+  const body = new URLSearchParams({
+    client_id: process.env.CLIENT_ID,
+    client_secret: process.env.CLIENT_SECRET,
+    refresh_token: refreshToken,
+    grant_type: "refresh_token",
+    redirect_uri: process.env.REDIRECT_URI,
+  });
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Failed to refresh token:", errorText);
+      throw new Error("Token refresh failed.");
+    }
+
+    const data = await response.json();
+    console.log("Token refreshed successfully:", data);
+
+    // Update tokens and expiry time
+    accessToken = data.access_token;
+    refreshToken = data.refresh_token;
+    tokenExpiryTime = Date.now() + data.expires_in * 1000; // Expires in seconds
+
+    process.env.ACCESS_TOKEN = accessToken;
+    process.env.REFRESH_TOKEN = refreshToken;
+  } catch (error) {
+    console.error("Error refreshing access token:", error.message);
+    throw error;
+  }
+}
+
+// Function to ensure the access token is valid
+async function getValidAccessToken() {
+  const now = Date.now();
+  if (now >= tokenExpiryTime) {
+    console.log("Access token expired. Refreshing...");
+    await refreshAccessToken();
+  }
+  return accessToken;
+}
 
 async function getGeolocationFromPostcode(postcode) {
   const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(postcode)}&key=${GOOGLE_MAPS_API_KEY}`;
@@ -69,9 +126,10 @@ async function createOrGetFolder(parentId, folderName) {
   const url = `https://graph.microsoft.com/v1.0/drive/items/${parentId}/children`;
 
   try {
+    const token = await getValidAccessToken(); // Ensure token is valid
     const response = await fetch(url, {
       method: "GET",
-      headers: { Authorization: `Bearer ${process.env.ACCESS_TOKEN}` },
+      headers: { Authorization: `Bearer ${token}` },
     });
 
     const data = await response.json();
@@ -96,10 +154,11 @@ async function createFolder(parentId, folderName) {
   const url = `https://graph.microsoft.com/v1.0/drive/items/${parentId}/children`;
 
   try {
+    const token = await getValidAccessToken(); // Ensure token is valid
     const response = await fetch(url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -127,13 +186,14 @@ async function uploadToOneDrive(filePath, folderId, filename) {
   const url = `https://graph.microsoft.com/v1.0/drive/items/${folderId}:/${filename}:/content`;
 
   try {
+    const token = await getValidAccessToken(); // Ensure token is valid
     const fileStream = fs.createReadStream(filePath);
     console.log(`Uploading file: ${filename} to folder ID: ${folderId}`);
 
     const response = await fetch(url, {
       method: "PUT",
       headers: {
-        Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/octet-stream",
       },
       body: fileStream,
@@ -229,12 +289,13 @@ app.post("/batch-upload", upload.array("files", 200), async (req, res) => {
     }
 
     console.log(`Generating shared link for main folder: ${folderName}`);
+    const token = await getValidAccessToken(); // Ensure token is valid
     const shareResponse = await fetch(
       `https://graph.microsoft.com/v1.0/drive/items/${mainFolderId}/createLink`,
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
+          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ type: "view", scope: "anonymous" }),

@@ -1,34 +1,15 @@
-const { ExifTool } = require("exiftool-vendored");
-const exiftool = new ExifTool();
-const fs = require("fs");
-const path = require("path");
-const fetch = require("node-fetch");
-const express = require("express");
-const cors = require("cors");
-const multer = require("multer");
-
-const app = express();
-const port = process.env.PORT || 3000;
-
-app.use(cors({ origin: "https://sncleaningservices.co.uk" }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-const upload = multer({ dest: "uploads/" });
-
 // Token Management
-let accessToken = process.env.ACCESS_TOKEN;
-let refreshToken = process.env.REFRESH_TOKEN;
-let tokenExpiryTime = Date.now() + 3600 * 1000; // Default expiry set for 1 hour from now
+let accessToken = null; // Initially null
+let tokenExpiryTime = 0; // Initially set to 0 (expired)
 
+// Function to refresh the access token using the `client_credentials` flow
 async function refreshAccessToken() {
-    const url = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
+    const url = "https://login.microsoftonline.com/f2aa74e3-a9a8-428f-9240-1933ed98e1e1/oauth2/v2.0/token"; // Replace <your-tenant-id> with your actual tenant ID
     const body = new URLSearchParams({
+        grant_type: "client_credentials",
         client_id: process.env.CLIENT_ID,
         client_secret: process.env.CLIENT_SECRET,
-        refresh_token: refreshToken,
-        grant_type: "refresh_token",
-        redirect_uri: process.env.REDIRECT_URI,
+        scope: "https://graph.microsoft.com/.default",
     });
 
     try {
@@ -47,14 +28,9 @@ async function refreshAccessToken() {
         const data = await response.json();
         console.log("Token refreshed successfully:", data);
 
-        // Update tokens and expiry
+        // Update access token and expiry time
         accessToken = data.access_token;
-        refreshToken = data.refresh_token;
         tokenExpiryTime = Date.now() + data.expires_in * 1000;
-
-        // Optionally, update environment variables or storage
-        process.env.ACCESS_TOKEN = accessToken;
-        process.env.REFRESH_TOKEN = refreshToken;
 
         return accessToken;
 
@@ -64,12 +40,13 @@ async function refreshAccessToken() {
     }
 }
 
+// Function to get a valid access token, refreshing it if expired
 async function getValidAccessToken() {
     console.log("Current time:", new Date().toISOString());
     console.log("Token expiry time:", new Date(tokenExpiryTime).toISOString());
 
-    if (Date.now() >= tokenExpiryTime) {
-        console.log("Access token expired. Refreshing...");
+    if (!accessToken || Date.now() >= tokenExpiryTime) {
+        console.log("Access token is missing or expired. Refreshing...");
         try {
             return await refreshAccessToken();
         } catch (error) {
@@ -81,6 +58,7 @@ async function getValidAccessToken() {
     console.log("Using valid access token.");
     return accessToken;
 }
+
 
 // Service folder mapping with lowercase keys
 const serviceFolderMapping = {

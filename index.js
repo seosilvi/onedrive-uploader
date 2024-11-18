@@ -148,10 +148,20 @@ async function createFolder(parentId, folderName) {
         "@microsoft.graph.conflictBehavior": "rename",
       }),
     });
-  // End of createFolder function
-  console.error("Error creating folder:", error.message);
-  throw error;
-}  // <-- Line 150, closing bracket of createFolder function
+
+    const data = await response.json();
+
+    if (data.id) {
+      console.log(`Folder created: ${folderName}`);
+      return data.id;
+    } else {
+      throw new Error(`Failed to create folder: ${folderName}`);
+    }
+  } catch (error) {
+    console.error("Error creating folder:", error.message);
+    throw error;
+  }
+}
 
 // Function to send to Albato Webhook with multiple files
 async function sendAllToAlbatoWebhook(frontly_id, postcode, uploadedFiles) {
@@ -179,20 +189,6 @@ async function sendAllToAlbatoWebhook(frontly_id, postcode, uploadedFiles) {
     }
   } catch (error) {
     console.error("Error sending data to Albato webhook:", error.message);
-  }
-}
-
-    const data = await response.json();
-
-    if (data.id) {
-      console.log(`Folder created: ${folderName}`);
-      return data.id;
-    } else {
-      throw new Error(`Failed to create folder: ${folderName}`);
-    }
-  } catch (error) {
-    console.error("Error creating folder:", error.message);
-    throw error;
   }
 }
 
@@ -304,7 +300,9 @@ app.post("/batch-upload", upload.array("files", 200), async (req, res) => {
 
       fs.unlinkSync(file.path);
     }
-await sendAllToAlbatoWebhook(frontly_id, postcode, uploadedFiles);
+
+    await sendAllToAlbatoWebhook(frontly_id, postcode, uploadedFiles);
+
     // Generate shared folder link
     const shareResponse = await fetch(
       `https://graph.microsoft.com/v1.0/drive/items/${mainFolderId}/createLink`,

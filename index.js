@@ -195,6 +195,35 @@ async function uploadToOneDrive(filePath, folderId, filename) {
   }
 }
 
+// Function to send Pabbly webhook
+async function sendToPabblyWebhook(frontly_id, postcode, folderUrl) {
+  const webhookUrl = "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTZjMDYzMTA0M2M1MjZjNTUzMzUxMzEi_pc";
+
+  try {
+    const payload = {
+      frontly_id: frontly_id,
+      postcode: postcode,
+      folder_url: folderUrl,
+    };
+
+    console.log("Sending data to Pabbly webhook:", payload);
+
+    const response = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (response.ok) {
+      console.log("Webhook sent successfully.");
+    } else {
+      console.error("Failed to send webhook. Response:", await response.text());
+    }
+  } catch (error) {
+    console.error("Error sending data to Pabbly webhook:", error.message);
+  }
+}
+
 app.post("/batch-upload", upload.array("files", 200), async (req, res) => {
   try {
     const { tag, postcode, form_name, frontly_id } = req.body;
@@ -242,6 +271,30 @@ app.post("/batch-upload", upload.array("files", 200), async (req, res) => {
 
       fs.unlinkSync(file.path);
     }
+
+    // Generate shared folder link
+    const shareResponse = await fetch(
+      `https://graph.microsoft.com/v1.0/drive/items/${mainFolderId}/createLink`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ type: "view", scope: "anonymous" }),
+      }
+    );
+
+    const shareData = await shareResponse.json();
+    if (!shareData.link || !shareData.link.webUrl) {
+      throw new Error("Failed to generate shared folder URL.");
+    }
+    const sharedFolderUrl = shareData.link.webUrl;
+
+    // Call Pabbly webhook
+    await sendToPabblyWebhook(frontly_id, postcode, sharedFolderUrl);
+
+    console.log("Webhook sent to Pabbly with shared folder URL.");
 
     res.status(200).json({ message: "All files uploaded successfully", files: uploadedFiles });
   } catch (error) {

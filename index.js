@@ -215,6 +215,7 @@ async function uploadToOneDrive(filePath, folderId, filename) {
         const fileStream = fs.createReadStream(filePath);
         console.log(`Uploading file: ${filename} to folder ID: ${folderId}`);
 
+        // Upload the file
         const response = await fetch(url, {
             method: "PUT",
             headers: {
@@ -226,18 +227,41 @@ async function uploadToOneDrive(filePath, folderId, filename) {
 
         const data = await response.json();
 
-        if (response.ok) {
-            console.log(`File uploaded successfully: ${data.webUrl}`);
-            return data.webUrl;
-        } else {
+        if (!response.ok) {
             console.error("Error uploading file to OneDrive:", data);
             throw new Error(`Upload failed: ${data.error.message}`);
         }
+
+        console.log(`File uploaded successfully: ${data.webUrl}`);
+
+        // Generate a shared link for the file
+        const sharedLinkUrl = `https://graph.microsoft.com/v1.0/drive/items/${data.id}/createLink`;
+        const shareResponse = await fetch(sharedLinkUrl, {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ type: "view", scope: "anonymous" }),
+        });
+
+        const shareData = await shareResponse.json();
+        if (!shareResponse.ok || !shareData.link || !shareData.link.webUrl) {
+            console.error("Error generating shared link:", shareData);
+            throw new Error("Failed to generate shared link for the file.");
+        }
+
+        console.log(`Shared link generated: ${shareData.link.webUrl}`);
+
+        // Return the shared URL instead of the internal OneDrive URL
+        return shareData.link.webUrl;
+
     } catch (error) {
         console.error("Error in uploadToOneDrive:", error.message);
         throw error;
     }
 }
+
 
 async function sendToPabblyWebhook(frontly_id, postcode, folderUrl) {
     const webhookUrl = "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTZjMDYzMTA0M2M1MjZjNTUzMzUxMzEi_pc";
@@ -313,7 +337,7 @@ app.post("/batch-upload", upload.array("files", 200), async (req, res) => {
 
         await sendAllToAlbatoWebhook(frontly_id, postcode, uploadedFiles);
 
-        // Generate shared folder link
+        // Generate shared folder link for the main folder
         const shareResponse = await fetch(
             `https://graph.microsoft.com/v1.0/drive/items/${mainFolderId}/createLink`,
             {
@@ -332,12 +356,16 @@ app.post("/batch-upload", upload.array("files", 200), async (req, res) => {
         }
         const sharedFolderUrl = shareData.link.webUrl;
 
-        // Call Pabbly webhook
+        // Call Pabbly webhook with the shared folder link
         await sendToPabblyWebhook(frontly_id, postcode, sharedFolderUrl);
 
         console.log("Webhook sent to Pabbly with shared folder URL.");
 
-        res.status(200).json({ message: "All files uploaded successfully", files: uploadedFiles });
+        res.status(200).json({
+            message: "All files uploaded successfully",
+            files: uploadedFiles, // Include shared links for individual files
+            sharedFolderUrl, // Include the shared folder link in response
+        });
     } catch (error) {
         console.error("Error in /batch-upload endpoint:", error.message);
         res.status(500).json({ error: "Internal server error" });
@@ -349,3 +377,4 @@ app.listen(port, () => {
 });
 
 process.on("exit", () => exiftool.end());
+

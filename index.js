@@ -180,7 +180,7 @@ async function createFolder(parentId, folderName) {
 }
 
 async function sendAllToAlbatoWebhook(frontly_id, postcode, uploadedFiles) {
-    const webhookUrl = "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTZjMDYzMTA0M2M1MjZjNTUzMzUxMzEi_pc";
+    const webhookUrl = "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTZjMDYzZTA0MzQ1MjY4NTUzYzUxMzYi_pc";
 
     try {
         const payload = {
